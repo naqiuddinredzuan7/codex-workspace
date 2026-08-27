@@ -1,0 +1,206 @@
+test.payment_date_verified?tag('Verified','ok'):tag('Not verified','warn')}</b></div><div class="thr117-statline"><span>PCB deduction month</span><b>${latest.payment_date_verified&&latest.payment_date?new Intl.DateTimeFormat('en-MY',{month:'long',year:'numeric'}).format(new Date(latest.payment_date+'T00:00:00')):'Not derived until verified'}</b></div><div class="thr117-sub" style="margin-top:9px">TRUST does not infer PCB month from payroll cutoff/end date.</div></div>`:''}
+    ${latest?.status==='draft' && !latest?.period_closed?`<div class="thr117-callout thr117-section"><b>Payroll period is still open.</b><div class="thr117-sub">Draft stays editable until ${fmtDate(latest.period_end)}. Pending inputs are separate from ${statutory?`${statutory} statutory and `:''}${setupBlockers} setup blocker(s).</div></div>`:''}
+    <div class="thr117-card thr117-section">
+      <div class="thr117-section-title"><h2>Payroll run history</h2><button class="thr117-btn primary" data-action="legacy-payroll">Detailed Payroll</button></div>
+      <div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Period</th><th>Status</th><th>Payment date</th><th>Gross</th><th>Deductions</th><th>Net</th><th>Readiness</th><th>Action</th></tr></thead><tbody>${runs.map(x=>`<tr><td>${fmtDate(x.period_start)} → ${fmtDate(x.period_end)}</td><td>${tag(payrollStatus(x),payrollStatusKind(x))}</td><td>${x.run_mode==='reference'?'—':`${fmtDate(x.payment_date)} ${x.payment_date_verified?tag('Verified','ok'):tag('Pending','warn')}`}</td><td>${money(x.gross_total)}</td><td>${money(x.deduction_total)}</td><td><b>${money(x.net_total)}</b></td><td>${x.run_mode==='reference'?tag(payrollIssueSummary(x),'warn'):(Number(x.blocking_issue_count||0)?tag(payrollIssueSummary(x),'warn'):Number(x.pending_input_count||0)?tag(payrollIssueSummary(x),''):tag('Ready','ok'))}</td><td>${x.run_mode==='reference'?'':`<button class="thr117-btn" data-action="payment-date" data-id="${esc(x.id)}">Payment Date</button>`}</td></tr>`).join('')}</tbody></table></div>
+      <div class="thr117-mobile-cards">${runs.map(x=>`<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${fmtDate(x.period_start)} → ${fmtDate(x.period_end)}</div><div class="thr117-sub">Net ${money(x.net_total)} · ${payrollIssueSummary(x)}</div></div>${tag(payrollStatus(x),payrollStatusKind(x))}</div>${x.run_mode==='reference'?'':`<button class="thr117-btn" style="width:100%;margin-top:10px" data-action="payment-date" data-id="${esc(x.id)}">Payment Date · ${fmtDate(x.payment_date)}</button>`}</div>`).join('')}</div>
+    </div>`;
+  }
+  return `${head('PAY','Payroll','Payroll runs, PCB statutory setup, audit snapshots and Final Pay.',actions)}${body}`;
+}
+
+function downloadCSV(name, rows){
+  if(!rows.length){toast('No rows to export.');return;}
+  const headers=Object.keys(rows[0]);
+  const cell=v=>`"${String(v??'').replace(/"/g,'""')}"`;
+  const csv=[headers.map(cell).join(','),...rows.map(r=>headers.map(h=>cell(r[h])).join(','))].join('\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+function reports(){
+  const leave=state.leaveBundle?.balances||[];
+  return `
+  ${head('REPORTS','Reports','Export operational data from the same secured Teras HR tenant.')}
+  <div class="thr117-grid thr117-three">
+    <div class="thr117-card"><div class="thr117-eyebrow">MASTER DATA</div><h2>Employee Directory</h2><p class="thr117-sub">${state.employees.length} records.</p><button class="thr117-btn primary" style="margin-top:14px" data-action="export-employees">Export CSV</button></div>
+    <div class="thr117-card"><div class="thr117-eyebrow">ATTENDANCE</div><h2>31-Day Timesheets</h2><p class="thr117-sub">${state.timesheets.length} rows.</p><button class="thr117-btn primary" style="margin-top:14px" data-action="export-attendance">Export CSV</button></div>
+    <div class="thr117-card"><div class="thr117-eyebrow">LEAVE</div><h2>${yearNow()} Balances</h2><p class="thr117-sub">${leave.length} employee/type rows.</p><button class="thr117-btn primary" style="margin-top:14px" data-action="export-leave">Export CSV</button></div>
+  </div>
+  <div class="thr117-callout thr117-section"><b>Payroll reports remain in the existing detailed Payroll workspace.</b><div class="thr117-sub">This keeps bank files, payslips and compliance outputs on the current certified payroll workflow while the HR shell is upgraded.</div><button class="thr117-btn primary" style="margin-top:12px" data-action="legacy-payroll">Open Detailed Payroll</button></div>`;
+}
+
+function settings(){
+  const mod=state.orgModules[0]||{}, policy=state.attendancePolicy[0]||{};
+  return `
+  ${head('SETTINGS','Settings','Tenant modules, users, attendance controls and system connection status.')}
+  <div class="thr117-grid thr117-two">
+    <div class="thr117-card">
+      <div class="thr117-section-title"><h2>Organization</h2>${tag(roleLabel(),'ok')}</div>
+      <div class="thr117-statline"><span>Company</span><b>${esc(state.membership?.organization_name||CFG.companyName)}</b></div>
+      <div class="thr117-statline"><span>Company code</span><b>${esc(state.membership?.company_code||CFG.companyCode)}</b></div>
+      <div class="thr117-statline"><span>Operating mode</span><b>${esc(mod.operating_mode||'full_suite')}</b></div>
+      <div class="thr117-statline"><span>Attendance</span><b>${mod.attendance_enabled===false?'Disabled':'Enabled'}</b></div>
+      <div class="thr117-statline"><span>Leave</span><b>${mod.leave_enabled===false?'Disabled':'Enabled'}</b></div>
+      <div class="thr117-statline"><span>Payroll</span><b>${mod.payroll_enabled===false?'Disabled':'Enabled'}</b></div>
+    </div>
+    <div class="thr117-card">
+      <div class="thr117-section-title"><h2>Attendance security</h2></div>
+      <div class="thr117-statline"><span>GPS</span><b>${policy.require_gps?'Required':'Optional'}</b></div>
+      <div class="thr117-statline"><span>Live selfie</span><b>${policy.require_live_selfie?'Required':'Optional'}</b></div>
+      <div class="thr117-statline"><span>Registered device</span><b>${policy.register_device?'Required':'Optional'}</b></div>
+      <div class="thr117-statline"><span>Outside geofence</span><b>${policy.allow_outside_geofence?'Allowed':'Blocked'}</b></div>
+      <div class="thr117-statline"><span>GPS accuracy</span><b>${esc(policy.allowed_accuracy_m||'—')}m</b></div>
+    </div>
+  </div>
+  <div class="thr117-card thr117-section">
+    <div class="thr117-section-title"><h2>Users & roles</h2><span class="thr117-sub">${state.members.length?state.members.length+' memberships':'Visible to owner/admin only'}</span></div>
+    ${state.members.length?`<div class="thr117-list">${state.members.map(m=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(m.full_name||m.email)}</div><div class="thr117-sub">${esc(m.email)}</div></div><div>${tag(m.role,m.status==='active'?'ok':'warn')}</div></div>`).join('')}</div>`:'<div class="thr117-empty">Member list is restricted for this role.</div>'}
+  </div>
+  ${securityBlock()}`;
+}
+
+function page(){
+  switch(state.tab){
+    case 'master':return master();
+    case 'attendance':return attendance();
+    case 'leave':return leave();
+    case 'operations':return operations();
+    case 'payroll':return payroll();
+    case 'payitems':return payItems();
+    case 'reports':return reports();
+    case 'integrations':return integrations();
+    case 'talent':return talent();
+    case 'settings':return settings();
+    default:return overview();
+  }
+}
+
+function render(){
+  const mount=document.getElementById('thr-v117-mount'); if(!mount) return;
+  if(!state.opened){
+    mount.innerHTML='<button id="thr117-launcher" type="button">Open TRUST HR</button>';
+    document.getElementById('thr117-launcher')?.addEventListener('click',()=>openApp());
+    return;
+  }
+  mount.innerHTML=`<div id="thr117-app"><div class="thr117-shell">${top()}${nav()}<main class="thr117-main">${page()}</main></div></div>`;
+  bind();
+}
+
+function bind(){
+  document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{
+    const tab=b.dataset.tab;
+    if(tab){state.tab=tab;render();}
+  }));
+  document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',async()=>{
+    const action=b.dataset.action;
+    if(await handleV123Action(action,b)) return;
+    if(action==='refresh'){ await loadData(true);render();toast('TRUST HR refreshed.');}
+    if(action==='legacy-payroll'){ closeApp(); }
+    if(action==='clear-search'){ state.search='';render(); }
+    if(action==='attendance-sub'){state.attendanceSub=b.dataset.sub||'records';render();}
+    if(action==='leave-sub'){state.leaveSub=b.dataset.sub||'overview';render();}
+    if(action==='payroll-sub'){state.payrollSub=b.dataset.sub||'runs';render();}
+    if(action==='new-final-pay'){openFinalPayModal();}
+    if(action==='final-pay-detail'){openFinalPayDetail(b.dataset.id);}
+    if(action==='final-pay-tax'){openFinalPayTaxModal(b.dataset.id);}
+    if(action==='final-pay-components'){openFinalPayComponentModal(b.dataset.id);}
+    if(action==='payment-date'){openPaymentDateModal(b.dataset.id);}
+    if(action==='tax-employee'){openTaxEmployeeModal(b.dataset.id);}
+    if(action==='tax-template'){downloadTaxTemplate();}
+    if(action==='tax-import'){openTaxImportModal();}
+    if(action==='calculate-pcb'){
+      try{
+        setLoading(true);
+        const result=await rpc('thr_calculate_payroll_pcb_run_v119',{p_run_id:b.dataset.id});
+        await loadData(false);state.payrollSub='tax';render();
+        toast(`${Number(result?.calculated||0)} PCB calculated · ${Number(result?.blocked||0)} blocked.`);
+      }catch(e){toast(e.message||'Unable to calculate PCB.');}finally{setLoading(false);}
+    }
+    if(action==='submit-final-pay'){
+      try{setLoading(true);await rpc('thr_submit_final_pay_case_v118',{p_case_id:b.dataset.id});await loadData(false);render();toast('Final Pay submitted for review.');}
+      catch(e){toast(e.message||'Unable to submit Final Pay.');}finally{setLoading(false);}
+    }
+    if(action==='approve-final-pay'){
+      if(!window.confirm('Approve this Final Pay entitlement snapshot?')) return;
+      try{setLoading(true);await rpc('thr_approve_final_pay_case_v118',{p_case_id:b.dataset.id});await loadData(false);render();toast('Final Pay approved.');}
+      catch(e){toast(e.message||'Unable to approve Final Pay.');}finally{setLoading(false);}
+    }
+    if(action==='prepare-final-pay-payroll'){
+      if(!window.confirm('Prepare a same-day off-cycle payroll for this approved Final Pay?')) return;
+      try{setLoading(true);await rpc('thr_prepare_final_pay_payroll_v118',{p_case_id:b.dataset.id});await loadData(false);render();toast('Off-cycle Final Pay payroll prepared.');}
+      catch(e){toast(e.message||'Unable to prepare off-cycle Final Pay payroll.');}finally{setLoading(false);}
+    }
+    if(action==='submit-final-pay-payroll'){
+      try{setLoading(true);await rpc('thr_submit_payroll_for_review_v117',{p_run_id:b.dataset.run});await loadData(false);render();toast('Off-cycle payroll submitted for review.');}
+      catch(e){toast(e.message||'Unable to submit off-cycle payroll.');}finally{setLoading(false);}
+    }
+    if(action==='approve-final-pay-payroll'){
+      if(!window.confirm('Approve and lock this off-cycle Final Pay payroll?')) return;
+      try{setLoading(true);await rpc('thr_approve_payroll_run',{p_run_id:b.dataset.run});await loadData(false);render();toast('Off-cycle Final Pay payroll approved and locked.');}
+      catch(e){toast(e.message||'Unable to approve off-cycle payroll.');}finally{setLoading(false);}
+    }
+    if(action==='finalize-final-pay'){
+      if(!window.confirm('Finalize this Final Pay after payroll approval?')) return;
+      try{setLoading(true);await rpc('thr_finalize_final_pay_case_v118',{p_case_id:b.dataset.id});await loadData(false);render();toast('Final Pay finalized.');}
+      catch(e){toast(e.message||'Unable to finalize Final Pay.');}finally{setLoading(false);}
+    }
+    if(action==='pin'){ openPinModal(b.dataset.id); }
+    if(action==='submit-review'){
+      try{ setLoading(true); await rpc('thr_submit_payroll_for_review_v117',{p_run_id:b.dataset.id}); await loadData(false); render(); toast('Payroll submitted for review.'); }
+      catch(e){ toast(e.message||'Unable to submit payroll for review.'); } finally { setLoading(false); }
+    }
+    if(action==='return-draft'){
+      try{ setLoading(true); await rpc('thr_return_payroll_to_draft_v117',{p_run_id:b.dataset.id,p_reason:'Returned from TRUST v123 shell'}); await loadData(false); render(); toast('Payroll returned to Draft.'); }
+      catch(e){ toast(e.message||'Unable to return payroll to Draft.'); } finally { setLoading(false); }
+    }
+    if(action==='approve-payroll'){
+      if(!window.confirm('Approve and lock this payroll run? Locked payroll cannot be regenerated.')) return;
+      try{ setLoading(true); await rpc('thr_approve_payroll_run',{p_run_id:b.dataset.id}); await loadData(false); render(); toast('Payroll approved and locked.'); }
+      catch(e){ toast(e.message||'Unable to approve payroll.'); } finally { setLoading(false); }
+    }
+    if(action==='export-employees'){
+      downloadCSV(`thr-employees-${todayISO()}.csv`,state.employees.map(e=>({employee_code:e.employee_code,full_name:e.full_name,department:e.department,position_title:e.position_title,hire_date:e.hire_date,employment_type:e.employment_type,employment_status:e.employment_status,payroll_participation:!!e.payroll_participation,payroll_group:e.payroll_group||'',is_test:!!e.is_test,workforce_linked:!!e.auth_user_id})));
+    }
+    if(action==='export-attendance'){
+      downloadCSV(`thr-attendance-${todayISO()}.csv`,state.timesheets.map(x=>({work_date:x.work_date,employee_code:x.employee_code,employee_name:x.employee_name,day_type:x.day_type,shift_code:x.shift_code,first_in:x.first_in,last_out:x.last_out,worked_minutes:x.worked_minutes,overtime_minutes:x.overtime_minutes,late_minutes:x.late_minutes,status:x.status})));
+    }
+    if(action==='export-leave'){
+      downloadCSV(`thr-leave-balances-${yearNow()}.csv`,(state.leaveBundle?.balances||[]).map(x=>({employee_code:x.employee_code,employee_name:x.employee_name,leave_type:x.leave_type_name,available_days:x.available_days,requires_balance:x.requires_balance})));
+    }
+  }));
+  const search=document.getElementById('thr117-employee-search');
+  if(search){
+    let t;
+    search.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{state.search=search.value;render();},180);});
+  }
+}
+
+function closeApp(){
+  state.opened=false; render();
+}
+async function openApp(){
+  try{
+    state.opened=true;
+    await loadData(true);
+    render();
+  }catch(e){
+    state.opened=false;
+    setLoading(false);
+    render();
+    toast(e.message==='NO_SESSION'?'Sign in to TRUST first, then open TRUST HR.':e.message);
+  }
+}
+
+
+
+/* TRUST v123 roadmap completion layer: Operations, Reporting, Platform, Integrations, Talent */
+function arr(v){return Array.isArray(v)?v:[];}
+function obj(v){return v&&typeof v==='object'&&!Array.isArray(v)?v:{};}
+function currentDraftRuns(){return arr(state.payrollRuns).filter(r=>r.status==='draft'&&['payroll','final_pay'].includes(r.run_mode));}
+function approvedRuns(){return arr(state.payrollRuns).filter(r=>['approved','finalized'].includes(r.status)&&['payroll','final_pay'].includes(r.run_mode));}
+function findEmployee(id){return state.employees.find(e=>e.id===id);}
+function employeeOptions(selected=''){return state.employees.filter(e=>e.employment_status==='active').map(e=>`<option value="${esc(e.id)}" ${e.id===selected?'selected':''}>${esc(e.employee_code)} · ${esc(e.full_name)}</option>`).join('');}
+function selectOptions(rows,valueKey,labelFn,selected=''){return arr(rows).map(x=>`<option value="${esc(x[valueKey])}" ${String(x[valueKey])===String(selected)?'selected':''}>${esc(labelFn(x))}</option>`).join('');}
+function jsonPretty(v){try{return JSON.stringify(v??{},null,2);}catch{return '{}';}}
+function downloadBlob(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},50);}
+async function sha256Text(text){if(!crypto?.subtle)return '';const buf=await crypto.subtle.digest('SHA-256',
