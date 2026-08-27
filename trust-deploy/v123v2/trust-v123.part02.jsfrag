@@ -1,0 +1,102 @@
+): '<div class="thr117-empty">No attendance rows yet.</div>'}
+      </div>
+    </div>
+    <div class="thr117-card">
+      <div class="thr117-section-title"><h2>Readiness</h2></div>
+      <div class="thr117-statline"><span>Payroll salary profiles</span><b>${setup}/${payrollPop}</b></div>
+      <div class="thr117-progress"><i style="width:${payrollPop?Math.min(100,setup/payrollPop*100):100}%"></i></div>
+      <div class="thr117-statline"><span>Workforce accounts</span><b>${state.employees.filter(x=>x.auth_user_id && !x.is_test).length}/${active}</b></div>
+      <div class="thr117-statline"><span>Leave policy assigned</span><b>${(lb.assignments||[]).filter(a=>liveActiveEmployees().some(e=>e.id===a.employee_id)).length}/${active}</b></div>
+      <div class="thr117-statline"><span>Current schedule coverage</span><b>${esc(currentCoverage ?? '—')}%</b></div>
+      ${blockers?`<div class="thr117-callout" style="margin-top:12px"><b>${blockers} payroll setup blocker(s)</b><div class="thr117-sub">Resolve these before submission/approval.${pending?` ${pending} attendance input(s) are still pending while the payroll period is open.`:''}</div></div>`:pending?`<div class="thr117-callout" style="margin-top:12px"><b>Payroll is still in Draft</b><div class="thr117-sub">${pending} employee input(s) are pending because the payroll period is still open. They are not approval blockers yet.</div></div>`:''}
+    </div>
+  </div>`;
+}
+
+function master(){
+  const profiles=new Map(state.salaryProfiles.map(x=>[x.employee_id,x]));
+  const payrollPop=payrollEmployees().length;
+  const setupCount=state.salaryProfiles.filter(x=>x.profile).length;
+  const testers=testerEmployees().length;
+  const q=state.search.toLowerCase().trim();
+  const rows=state.employees.filter(e=>!q || [e.employee_code,e.full_name,e.department,e.position_title].some(v=>String(v||'').toLowerCase().includes(q)));
+  const actions=`<input class="thr117-input search" id="thr117-employee-search" value="${esc(state.search)}" placeholder="Search employee, ID or department"><button class="thr117-btn" data-action="clear-search">Clear</button>`;
+  return `
+  ${head('MASTER DATA','Employees','Employee profile, employment status, salary setup and Workforce access.',actions)}
+  <div class="thr117-grid thr117-kpis">
+    ${kpi('Employees',state.employees.length,`${liveActiveEmployees().length} live · ${testers} tester`)}
+    ${kpi('Active',liveActiveEmployees().length,'live workforce')}
+    ${kpi('Salary Setup',`${setupCount}/${payrollPop}`,`${Math.max(0,payrollPop-setupCount)} missing · ${state.employees.filter(e=>!e.payroll_participation).length} excluded`)}
+    ${kpi('Workforce Access',state.employees.filter(e=>e.auth_user_id).length,'auth-linked')}
+  </div>
+  <div class="thr117-card thr117-section">
+    <div class="thr117-section-title"><h2>Employee directory</h2><span class="thr117-sub">${rows.length} shown</span></div>
+    <div class="thr117-table-wrap">
+      <table class="thr117-table">
+        <thead><tr><th>ID</th><th>Employee</th><th>Employment</th><th>Salary</th><th>Workforce</th><th>Action</th></tr></thead>
+        <tbody>${rows.map(e=>{
+          const s=profiles.get(e.id), p=s?.profile;
+          const salary=p ? (p.pay_basis==='monthly'?money(p.basic_salary):`${money(p.pay_rate)} / ${p.pay_basis}`) : 'Not set';
+          return `<tr><td><b>${esc(e.employee_code)}</b></td><td><div class="thr117-name">${esc(e.full_name)}</div><div class="thr117-sub">${esc(e.department||'—')} · ${esc(e.position_title||'—')}</div></td><td>${tag(e.employment_status,e.employment_status==='active'?'ok':'warn')}${e.is_test?` ${tag('Tester','warn')}`:''}<div class="thr117-sub">${esc(e.employment_type||'—')} · ${fmtDate(e.hire_date)}</div></td><td>${!e.payroll_participation?tag('Excluded',''):p?tag('Ready','ok'):tag('Missing','warn')}<div class="thr117-sub">${!e.payroll_participation?'Non-payroll / tester':esc(salary)}</div></td><td>${e.auth_user_id?tag('Linked','ok'):tag('Not linked','warn')}</td><td><button class="thr117-btn" data-action="pin" data-id="${esc(e.id)}">Set / Reset PIN</button></td></tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <div class="thr117-mobile-cards">
+      ${rows.map(e=>{
+        const s=profiles.get(e.id), p=s?.profile;
+        return `<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${esc(e.full_name)}</div><div class="thr117-sub">${esc(e.employee_code)} · ${esc(e.department||'—')}</div></div>${e.is_test?tag('Tester','warn'):tag(e.employment_status,e.employment_status==='active'?'ok':'warn')}</div><div class="row-meta"><span>Salary: ${!e.payroll_participation?'Excluded':p?'Ready':'Missing'}</span><span>Workforce: ${e.auth_user_id?'Linked':'Not linked'}</span></div><button class="thr117-btn" style="width:100%;margin-top:10px" data-action="pin" data-id="${esc(e.id)}">Set / Reset Workforce PIN</button></div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function attendance(){
+  const b=state.attendanceBundle||{}, r=b.readiness||{}, ex=b.exception_counts||{};
+  const ts=state.timesheets||[];
+  const complete=ts.filter(x=>x.status==='complete').length;
+  const incomplete=ts.filter(x=>x.status!=='complete').length;
+  const ot=ts.reduce((a,x)=>a+Number(x.overtime_minutes||0),0);
+  const holidays=(b.holidays||[]).filter(h=>String(h.holiday_date||'').startsWith(String(yearNow())));
+  const policy=state.attendancePolicy[0]||{};
+  const rule=b.rules||{};
+  const actions=`<button class="thr117-btn" data-action="attendance-sub" data-sub="records">Records</button><button class="thr117-btn" data-action="attendance-sub" data-sub="exceptions">Exceptions</button><button class="thr117-btn" data-action="attendance-sub" data-sub="roster">Roster & Shifts</button><button class="thr117-btn" data-action="attendance-sub" data-sub="rules">Rules</button><button class="thr117-btn" data-action="attendance-sub" data-sub="holidays">Holidays</button>`;
+  let body='';
+  if(state.attendanceSub==='exceptions'){
+    const corr=b.correction_requests||[], overtime=b.overtime_requests||[];
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Correction requests</h2>${tag(`${corr.filter(x=>x.status==='pending').length} pending`,corr.some(x=>x.status==='pending')?'warn':'ok')}</div><div class="thr117-list">${corr.length?corr.slice(0,40).map(x=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${fmtDate(x.work_date)} · ${esc(x.request_type)}</div></div>${tag(x.status,x.status==='pending'?'warn':'')}</div>`).join(''):'<div class="thr117-empty">No correction requests.</div>'}</div></div><div class="thr117-card"><div class="thr117-section-title"><h2>Overtime requests</h2>${tag(`${overtime.filter(x=>x.status==='pending').length} pending`,overtime.some(x=>x.status==='pending')?'warn':'ok')}</div><div class="thr117-list">${overtime.length?overtime.slice(0,40).map(x=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${fmtDate(x.work_date)} · detected ${hours(Number(x.detected_normal_ot_minutes||0)+Number(x.detected_rest_day_ot_minutes||0)+Number(x.detected_public_holiday_ot_minutes||0))}h</div></div>${tag(x.status,x.status==='pending'?'warn':'')}</div>`).join(''):'<div class="thr117-empty">No overtime requests.</div>'}</div></div></div>`;
+  } else if(state.attendanceSub==='roster'){
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Shifts</h2></div><div class="thr117-list">${(b.shifts||[]).map(s=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(s.code)} · ${esc(s.name)}</div><div class="thr117-sub">${esc(s.start_time)} → ${esc(s.end_time)} · ${esc(s.break_mode||'')}</div></div>${s.active?tag('Active','ok'):tag('Inactive')}</div>`).join('')||'<div class="thr117-empty">No shifts.</div>'}</div></div><div class="thr117-card"><div class="thr117-section-title"><h2>Worksites</h2></div><div class="thr117-list">${state.worksites.map(w=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(w.name)}</div><div class="thr117-sub">${esc(w.address||'—')}</div></div>${tag(`${w.geofence_radius_m}m geofence`,w.active?'ok':'')}</div>`).join('')||'<div class="thr117-empty">No worksites.</div>'}</div></div></div>`;
+  } else if(state.attendanceSub==='rules'){
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Attendance verification</h2></div><div class="thr117-statline"><span>GPS required</span><b>${policy.require_gps?'Yes':'No'}</b></div><div class="thr117-statline"><span>Live selfie required</span><b>${policy.require_live_selfie?'Yes':'No'}</b></div><div class="thr117-statline"><span>Device registration</span><b>${policy.register_device?'Yes':'No'}</b></div><div class="thr117-statline"><span>Allowed GPS accuracy</span><b>${esc(policy.allowed_accuracy_m||'—')}m</b></div><div class="thr117-statline"><span>Outside geofence</span><b>${policy.allow_outside_geofence?'Allowed':'Blocked'}</b></div></div><div class="thr117-card"><div class="thr117-section-title"><h2>OT & working rules</h2></div><div class="thr117-statline"><span>Normal OT</span><b>${esc(rule.normal_ot_multiplier||'—')}×</b></div><div class="thr117-statline"><span>Rest day</span><b>${esc(rule.rest_day_multiplier||'—')}×</b></div><div class="thr117-statline"><span>Public holiday regular</span><b>${esc(rule.public_holiday_regular_multiplier||'—')}×</b></div><div class="thr117-statline"><span>Public holiday OT</span><b>${esc(rule.public_holiday_ot_multiplier||'—')}×</b></div><div class="thr117-statline"><span>OT approval</span><b>${rule.require_ot_approval?'Required':'Not required'}</b></div></div></div>`;
+  } else if(state.attendanceSub==='holidays'){
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>${yearNow()} Holidays</h2><span class="thr117-sub">${holidays.length} configured</span></div><div class="thr117-list">${holidays.map(h=>`<div class="thr117-list-item"><div><div class="thr117-name">${fmtDate(h.holiday_date)} · ${esc(h.name)}</div><div class="thr117-sub">${esc(h.holiday_type)}${h.worksite_name?' · '+esc(h.worksite_name):''}</div></div>${h.paid?tag('Paid','ok'):tag('Unpaid')}</div>`).join('')||'<div class="thr117-empty">No holidays configured.</div>'}</div></div>`;
+  } else {
+    const rows=ts.slice(0,120);
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>Last 31 days</h2><span class="thr117-sub">${rows.length} timesheet rows</span></div><div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Date</th><th>Employee</th><th>Schedule</th><th>In / Out</th><th>Hours</th><th>OT</th><th>Status</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${fmtDate(x.work_date)}</td><td><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.employee_code)}</div></td><td>${esc(x.day_type)}<div class="thr117-sub">${esc(x.shift_code||x.schedule_source||'—')}</div></td><td>${fmtDateTime(x.first_in)}<div class="thr117-sub">${fmtDateTime(x.last_out)}</div></td><td>${hours(x.worked_minutes)}h</td><td>${hours(x.overtime_minutes)}h</td><td>${tag(x.status,x.status==='complete'?'ok':'warn')}</td></tr>`).join('')}</tbody></table></div><div class="thr117-mobile-cards">${rows.slice(0,50).map(x=>`<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${fmtDate(x.work_date)} · ${esc(x.day_type)}</div></div>${tag(x.status,x.status==='complete'?'ok':'warn')}</div><div class="row-meta"><span>${hours(x.worked_minutes)} worked</span><span>${hours(x.overtime_minutes)} OT</span></div></div>`).join('')}</div></div>`;
+  }
+  return `${head('ATTENDANCE','Attendance','Daily attendance, exceptions, roster, worksite controls and overtime rules.',actions)}
+  <div class="thr117-grid thr117-kpis">
+    ${kpi('Complete',complete,`${incomplete} incomplete/open`)}
+    ${kpi('OT Hours',hours(ot),'last 31 days')}
+    ${kpi('Exceptions',Number(ex.pending_corrections||0)+Number(ex.pending_ot||0),'pending review')}
+    ${kpi('Schedule Coverage',`${r.coverage_pct ?? '—'}%`,`${r.fallback_schedule_cells ?? 0} fallback cells`)}
+  </div><div class="thr117-section">${body}</div>`;
+}
+
+function leave(){
+  const b=state.leaveBundle||{}, req=b.requests||[], bal=b.balances||[], types=b.leave_types||[];
+  const pending=req.filter(x=>x.status==='pending').length;
+  const annual=bal.filter(x=>['ANL','AL'].includes(String(x.leave_type_code||'').toUpperCase()));
+  const totalAnnual=annual.reduce((a,x)=>a+Number(x.available_days||0),0);
+  const actions=`<button class="thr117-btn" data-action="leave-sub" data-sub="overview">Overview</button><button class="thr117-btn" data-action="leave-sub" data-sub="requests">Requests</button><button class="thr117-btn" data-action="leave-sub" data-sub="balances">Balances</button><button class="thr117-btn" data-action="leave-sub" data-sub="setup">Policy Setup</button>`;
+  let body='';
+  if(state.leaveSub==='requests'){
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>Leave requests</h2>${tag(`${pending} pending`,pending?'warn':'ok')}</div><div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Leave</th><th>Dates</th><th>Days</th><th>Status</th></tr></thead><tbody>${req.map(x=>`<tr><td><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.employee_code)}</div></td><td>${esc(x.leave_type)}</td><td>${fmtDate(x.start_date)} → ${fmtDate(x.end_date)}</td><td>${esc(x.requested_days ?? '—')}</td><td>${tag(x.status,x.status==='pending'?'warn':x.status==='approved'?'ok':'')}</td></tr>`).join('')}</tbody></table></div>${!req.length?'<div class="thr117-empty">No leave requests yet.</div>':''}</div>`;
+  } else if(state.leaveSub==='balances'){
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>${yearNow()} Leave balances</h2><span class="thr117-sub">${bal.length} employee/type rows</span></div><div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Leave Type</th><th>Balance</th></tr></thead><tbody>${bal.map(x=>`<tr><td><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.employee_code)}</div></td><td>${esc(x.leave_type_name)}</td><td>${x.requires_balance?`${esc(x.available_days)} days`:'No balance limit'}</td></tr>`).join('')}</tbody></table></div><div class="thr117-mobile-cards">${bal.map(x=>`<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.leave_type_name)}</div></div><b>${x.requires_balance?`${esc(x.available_days)}d`:'∞'}</b></div></div>`).join('')}</div></div>`;
+  } else if(state.leaveSub==='setup'){
+    const rules=b.rules||[];
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Leave types</h2></div><div class="thr117-list">${types.map(x=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(x.code)} · ${esc(x.name)}</div><div class="thr117-sub">${esc(x.category)} · ${x.is_paid?'Paid':'Unpaid'} · ${x.allow_half_day?'Half-day allowed':'Full day only'}</div></div>${x.attachment_required?tag('Attachment','warn'):tag('Active','ok')}</div>`).join('')}</div></div><div class="thr117-card"><div class="thr117-section-title"><h2>Statutory policy</h2></div>${rules.map(x=>`<div class="thr117-statline"><span>${esc(x.leave_type_name)}</span><b>${x.entitlement_mode==='service_tier'?'Service tier':x.entitlement_mode==='unlimited'?'Unlimited':`${esc(x.annual_entitlement_days)} days`}</b></div>`).join('')}</div></div>`;
+  } else {
+    const recent=req.slice(0,8);
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Recent requests</h2><button class="thr117-btn" data-action="leave-sub" data-sub="requests">View all</button></div><div class="thr117-list">${recent.length?recent.map(x=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.leave_type)} · ${fmtDate(x.start_date)} → ${fmtDate(x.end_date)}</div></div>${tag(x.status,x.status==='pending'?'warn':x.status==='approved'?'ok':'')}</div>`).join(''):'<div class="thr117-empty">No leave requests yet.</div>'}<
