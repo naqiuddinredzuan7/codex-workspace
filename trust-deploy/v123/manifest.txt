@@ -1,0 +1,1 @@
+TRUST v123 temporary deployment handoff for terashrsolutions.com. Source fragments are removed after the WordPress draft self-hosts and verifies the release asset. SHA-256 release ZIP: 7c0fc4bedd3ab3783e084aa2b1ba60f7a5debd64a1e665bcf38e827b4e05a05f
