@@ -1,0 +1,147 @@
+fied').checked;
+    if(!date){toast('Enter the actual/planned payment date.');return;}
+    if(!verified){toast('Verify the payment date before saving.');return;}
+    try{setLoading(true);await rpc('thr_set_payroll_payment_date_v119',{p_run_id:id,p_payment_date:date,p_verified:true});modal.remove();await loadData(false);render();toast('Verified payment date saved. PCB inputs marked stale if the date changed.');}
+    catch(e){toast(e.message||'Unable to save payment date.');}finally{setLoading(false);}
+  };
+}
+
+function downloadTaxTemplate(){
+  const rows=taxEmployees().map(e=>({
+    employee_code:e.employee_code,
+    effective_from:'',
+    residence_status:'',
+    mtd_category:'',
+    tax_treatment:'',
+    spouse_relief:'',
+    disabled_self:'',
+    disabled_spouse:'',
+    children_relief_units:'',
+    mandatory_epf_tax_cap:'',
+    ytd_through_month:'',
+    ytd_gross:'',
+    ytd_epf:'',
+    ytd_mtd:'',
+    ytd_zakat:'',
+    ytd_deductions:'',
+    ytd_verified:'',
+    ytd_source_reference:'',
+    declaration_type:'',
+    tp3_gross:'',
+    tp3_epf:'',
+    tp3_mtd:'',
+    tp3_zakat:'',
+    tp3_deductions:'',
+    declaration_name:'',
+    tp3_source_reference:''
+  }));
+  downloadCSV(`trust-tax-setup-${yearNow()}-template.csv`,rows);
+}
+
+function openTaxEmployeeModal(id){
+  const e=taxEmployees().find(x=>x.employee_id===id); if(!e) return;
+  const p=e.tax_profile||{},y=e.ytd_opening||{},t=e.tp3||{};
+  const modal=document.createElement('div');modal.className='thr117-modal';
+  modal.innerHTML=`<div class="thr117-modal-card thr117-modal-wide"><div class="thr117-eyebrow">PCB & TAX SETUP · ${yearNow()}</div><h3>${esc(e.employee_name)}</h3><p class="thr117-sub">${esc(e.employee_code)} · Joined ${fmtDate(e.hire_date)}</p>
+  <div class="thr117-form-section"><div class="thr117-section-title"><h2>1 · Tax profile</h2>${p.id?tag('Configured','ok'):tag('Required before PCB','warn')}</div><div class="thr117-form-grid">
+    <label>Effective from<input id="tax-effective" class="thr117-input" type="date" value="${esc(p.effective_from||'')}"></label>
+    <label>Residence status<select id="tax-residence" class="thr117-select"><option value="">Select from verified record</option><option value="resident" ${p.residence_status==='resident'?'selected':''}>Resident</option><option value="non_resident" ${p.residence_status==='non_resident'?'selected':''}>Non-resident</option><option value="unknown" ${p.residence_status==='unknown'?'selected':''}>Unknown / review</option></select></label>
+    <label>MTD category<select id="tax-category" class="thr117-select"><option value="">Select</option>${[1,2,3].map(v=>`<option value="${v}" ${Number(p.mtd_category)===v?'selected':''}>Category ${v}</option>`).join('')}</select></label>
+    <label>Tax treatment<select id="tax-treatment" class="thr117-select"><option value="">Select</option><option value="ordinary" ${p.tax_treatment==='ordinary'?'selected':''}>Ordinary</option><option value="rep_15" ${p.tax_treatment==='rep_15'?'selected':''}>Returning Expert 15%</option><option value="knowledge_worker_15" ${p.tax_treatment==='knowledge_worker_15'?'selected':''}>Knowledge Worker 15%</option><option value="csuite_15" ${p.tax_treatment==='csuite_15'?'selected':''}>C-Suite 15%</option></select></label>
+    <label>Children relief units<input id="tax-children" class="thr117-input" type="number" min="0" step="0.5" value="${p.children_relief_units??''}"></label>
+    <label>Mandatory EPF tax cap<input id="tax-cap" class="thr117-input" type="number" min="0" step="0.01" value="${p.mandatory_epf_tax_cap??''}" placeholder="Only enter verified rule/profile value"></label>
+  </div><div class="thr117-check-grid">
+    <label class="thr117-check"><input id="tax-spouse" type="checkbox" ${p.spouse_relief?'checked':''}><span><b>Spouse relief</b></span></label>
+    <label class="thr117-check"><input id="tax-disabled-self" type="checkbox" ${p.disabled_self?'checked':''}><span><b>Disabled self relief</b></span></label>
+    <label class="thr117-check"><input id="tax-disabled-spouse" type="checkbox" ${p.disabled_spouse?'checked':''}><span><b>Disabled spouse relief</b></span></label>
+  </div><div class="thr117-toolbar" style="margin-top:12px"><button class="thr117-btn primary" id="tax-profile-save">Save Tax Profile</button></div></div>
+
+  <div class="thr117-form-section"><div class="thr117-section-title"><h2>2 · Teras current-employer YTD opening</h2>${y.id?(y.verified?tag('Verified','ok'):tag('Unverified','warn')):tag('Only if migration history is needed','')}</div><div class="thr117-sub">This is for TRUST migration balances from the current employer. Do not use TP3 for this.</div><div class="thr117-form-grid">
+    <label>Through month (0–11)<input id="ytd-month" class="thr117-input" type="number" min="0" max="11" step="1" value="${y.through_month??''}" placeholder="0 = no prior current-employer month"></label>
+    <label>Gross<input id="ytd-gross" class="thr117-input" type="number" min="0" step="0.01" value="${y.current_employer_gross??''}"></label>
+    <label>EPF employee<input id="ytd-epf" class="thr117-input" type="number" min="0" step="0.01" value="${y.current_employer_epf??''}"></label>
+    <label>PCB / MTD<input id="ytd-mtd" class="thr117-input" type="number" min="0" step="0.01" value="${y.current_employer_mtd??''}"></label>
+    <label>Zakat<input id="ytd-zakat" class="thr117-input" type="number" min="0" step="0.01" value="${y.current_employer_zakat??''}"></label>
+    <label>Allowable deductions<input id="ytd-deductions" class="thr117-input" type="number" min="0" step="0.01" value="${y.current_employer_allowable_deductions??''}"></label>
+    <label style="grid-column:1/-1">Source reference<input id="ytd-source" class="thr117-input" value="${esc(y.source_reference||'')}" placeholder="Payroll migration file / signed reconciliation / source document"></label>
+  </div><label class="thr117-check"><input id="ytd-verified" type="checkbox" ${y.verified?'checked':''}><span><b>Verified against source records</b><small>Do not verify estimated or assumed opening balances.</small></span></label><div class="thr117-toolbar" style="margin-top:12px"><button class="thr117-btn primary" id="ytd-save">Save YTD Opening</button></div></div>
+
+  <div class="thr117-form-section"><div class="thr117-section-title"><h2>3 · TP3 / zero previous-employer declaration</h2>${t.id?tag(`${String(t.status||'pending').toUpperCase()}${t.verified?' · VERIFIED':''}`,t.status==='approved'&&t.verified?'ok':'warn'):tag('Record only when applicable','')}</div><div class="thr117-form-grid">
+    <label>Declaration type<select id="tp3-type" class="thr117-select"><option value="">Select only from received declaration</option><option value="tp3" ${String(t.source_form||'').toUpperCase()==='TP3'?'selected':''}>TP3 · Previous employer amounts</option><option value="zero_declaration" ${String(t.source_form||'').toUpperCase()==='ZERO_DECLARATION'?'selected':''}>Zero previous-employer declaration</option></select></label>
+    <label>Declaration name<input id="tp3-name" class="thr117-input" value="${esc(t.declaration_name||'')}" placeholder="Name on declaration"></label>
+    <label>Previous gross<input id="tp3-gross" class="thr117-input" type="number" min="0" step="0.01" value="${t.previous_employer_gross??''}"></label>
+    <label>Previous EPF<input id="tp3-epf" class="thr117-input" type="number" min="0" step="0.01" value="${t.previous_employer_epf??''}"></label>
+    <label>Previous PCB / MTD<input id="tp3-mtd" class="thr117-input" type="number" min="0" step="0.01" value="${t.previous_employer_mtd??''}"></label>
+    <label>Previous zakat<input id="tp3-zakat" class="thr117-input" type="number" min="0" step="0.01" value="${t.previous_employer_zakat??''}"></label>
+    <label>Previous allowable deductions<input id="tp3-deductions" class="thr117-input" type="number" min="0" step="0.01" value="${t.previous_employer_allowable_deductions??''}"></label>
+    <label>Source reference<input id="tp3-source" class="thr117-input" value="${esc(t?.metadata?.source_reference||'')}" placeholder="TP3 / signed zero declaration reference"></label>
+  </div><div class="thr117-toolbar" style="margin-top:12px"><button class="thr117-btn" id="tp3-record">Record as Pending</button>${t.id&&t.status==='pending'?`<button class="thr117-btn primary" id="tp3-approve">Approve Verified Declaration</button><button class="thr117-btn" id="tp3-reject">Reject</button>`:''}</div></div>
+  <div class="thr117-modal-actions"><button class="thr117-btn primary" id="tax-close">Close</button></div></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#tax-close').onclick=()=>modal.remove();
+
+  modal.querySelector('#tax-profile-save').onclick=async()=>{
+    const residence=modal.querySelector('#tax-residence').value,cat=Number(modal.querySelector('#tax-category').value),treat=modal.querySelector('#tax-treatment').value,effective=modal.querySelector('#tax-effective').value;
+    if(!effective||!residence||!cat||!treat){toast('Tax profile needs effective date, residence status, MTD category and tax treatment.');return;}
+    try{setLoading(true);await rpc('thr_upsert_tax_profile_v118',{p_org_id:ORG_ID,p_employee_id:id,p_effective_from:effective,p_residence_status:residence,p_mtd_category:cat,p_tax_treatment:treat,p_spouse_relief:modal.querySelector('#tax-spouse').checked,p_disabled_self:modal.querySelector('#tax-disabled-self').checked,p_disabled_spouse:modal.querySelector('#tax-disabled-spouse').checked,p_children_relief_units:Number(modal.querySelector('#tax-children').value||0),p_children_breakdown:[],p_mandatory_epf_tax_cap:Number(modal.querySelector('#tax-cap').value||4000)});modal.remove();await loadData(false);render();toast('Tax profile saved.');}
+    catch(err){toast(err.message||'Unable to save tax profile.');}finally{setLoading(false);}
+  };
+  modal.querySelector('#ytd-save').onclick=async()=>{
+    const month=modal.querySelector('#ytd-month').value,verified=modal.querySelector('#ytd-verified').checked,source=modal.querySelector('#ytd-source').value.trim();
+    if(month===''){toast('Enter the YTD through-month only when migration opening is required.');return;}
+    if(verified&&!source){toast('Verified YTD opening requires a source reference.');return;}
+    try{setLoading(true);await rpc('thr_upsert_tax_ytd_opening_v118',{p_org_id:ORG_ID,p_employee_id:id,p_tax_year:yearNow(),p_through_month:Number(month),p_gross:Number(modal.querySelector('#ytd-gross').value||0),p_epf:Number(modal.querySelector('#ytd-epf').value||0),p_mtd:Number(modal.querySelector('#ytd-mtd').value||0),p_zakat:Number(modal.querySelector('#ytd-zakat').value||0),p_allowable_deductions:Number(modal.querySelector('#ytd-deductions').value||0),p_verified:verified,p_source_reference:source||null});modal.remove();await loadData(false);render();toast('Current-employer YTD opening saved.');}
+    catch(err){toast(err.message||'Unable to save YTD opening.');}finally{setLoading(false);}
+  };
+  modal.querySelector('#tp3-record').onclick=async()=>{
+    const typ=modal.querySelector('#tp3-type').value,name=modal.querySelector('#tp3-name').value.trim(),source=modal.querySelector('#tp3-source').value.trim();
+    if(!typ||!name||!source){toast('Declaration type, declaration name and source reference are required.');return;}
+    const nums=['gross','epf','mtd','zakat','deductions'].map(k=>Number(modal.querySelector(`#tp3-${k}`).value||0));
+    if(typ==='zero_declaration'&&nums.some(n=>n!==0)){toast('Zero declaration must contain zero previous-employer amounts.');return;}
+    try{setLoading(true);await rpc('thr_record_tp3_admin_v119',{p_org_id:ORG_ID,p_employee_id:id,p_tax_year:yearNow(),p_declaration_type:typ,p_previous_gross:nums[0],p_previous_epf:nums[1],p_previous_mtd:nums[2],p_previous_zakat:nums[3],p_previous_deductions:nums[4],p_declaration_name:name,p_source_reference:source});modal.remove();await loadData(false);render();toast('Declaration recorded as pending.');}
+    catch(err){toast(err.message||'Unable to record declaration.');}finally{setLoading(false);}
+  };
+  modal.querySelector('#tp3-approve')?.addEventListener('click',async()=>{
+    if(!window.confirm('Approve this declaration only after checking the source document?')) return;
+    try{setLoading(true);await rpc('thr_decide_tp3_v118',{p_carry_in_id:t.id,p_approve:true});modal.remove();await loadData(false);render();toast('Declaration approved and verified.');}
+    catch(err){toast(err.message||'Unable to approve declaration.');}finally{setLoading(false);}
+  });
+  modal.querySelector('#tp3-reject')?.addEventListener('click',async()=>{
+    if(!window.confirm('Reject this declaration? Existing record is preserved with rejected status.')) return;
+    try{setLoading(true);await rpc('thr_decide_tp3_v118',{p_carry_in_id:t.id,p_approve:false});modal.remove();await loadData(false);render();toast('Declaration rejected; record preserved.');}
+    catch(err){toast(err.message||'Unable to reject declaration.');}finally{setLoading(false);}
+  });
+}
+
+function openTaxImportModal(){
+  const modal=document.createElement('div');modal.className='thr117-modal';
+  modal.innerHTML=`<div class="thr117-modal-card thr117-modal-wide"><div class="thr117-eyebrow">BULK TAX ONBOARDING</div><h3>Import verified worker tax setup</h3><p class="thr117-sub">Use the TRUST template. Nothing is auto-assumed and rows are matched by employee_code.</p><input id="tax-file" class="thr117-input" type="file" accept=".csv,text/csv" style="width:100%;margin-top:14px"><div id="tax-import-preview" class="thr117-callout" style="margin-top:14px"><b>No file selected.</b><div class="thr117-sub">Import only actual HR/payroll records. TP3/zero declarations are recorded as pending and still need human approval.</div></div><div class="thr117-modal-actions"><button class="thr117-btn" id="tax-import-cancel">Cancel</button><button class="thr117-btn primary" id="tax-import-run" disabled>Validate & Import</button></div></div>`;
+  document.body.appendChild(modal);
+  const input=modal.querySelector('#tax-file'),preview=modal.querySelector('#tax-import-preview'),run=modal.querySelector('#tax-import-run');
+  let rows=[];
+  modal.querySelector('#tax-import-cancel').onclick=()=>modal.remove();
+  input.onchange=async()=>{
+    const f=input.files?.[0]; if(!f){rows=[];run.disabled=true;return;}
+    rows=parseCSV(await f.text());
+    const known=new Set(taxEmployees().map(e=>String(e.employee_code)));
+    const invalid=rows.filter(r=>!known.has(String(r.employee_code||'')));
+    preview.innerHTML=`<b>${rows.length} row(s) loaded</b><div class="thr117-sub">${invalid.length?`${invalid.length} employee code(s) not found. Import is blocked until fixed.`:'All employee codes matched. Blank sections will be skipped.'}</div>`;
+    run.disabled=!rows.length||!!invalid.length;
+  };
+  run.onclick=async()=>{
+    if(!rows.length) return;
+    if(!window.confirm(`Import tax setup for ${rows.length} row(s)? Only populated sections will be written.`)) return;
+    const lookup=new Map(taxEmployees().map(e=>[String(e.employee_code),e]));
+    let ok=0,failed=0;
+    try{
+      setLoading(true);
+      for(const r of rows){
+        const e=lookup.get(String(r.employee_code)); if(!e){failed++;continue;}
+        try{
+          if(r.effective_from&&r.residence_status&&r.mtd_category&&r.tax_treatment){
+            await rpc('thr_upsert_tax_profile_v118',{p_org_id:ORG_ID,p_employee_id:e.employee_id,p_effective_from:r.effective_from,p_residence_status:r.residence_status,p_mtd_category:Number(r.mtd_category),p_tax_treatment:r.tax_treatment,p_spouse_relief:csvBool(r.spouse_relief)===true,p_disabled_self:csvBool(r.disabled_self)===true,p_disabled_spouse:csvBool(r.disabled_spouse)===true,p_children_relief_units:Number(r.children_relief_units||0),p_children_breakdown:[],p_mandatory_epf_tax_cap:Number(r.mandatory_epf_tax_cap||4000)});
+          }
+          if(r.ytd_through_month!==''){
+            const verified=csvBool(r.ytd_verified)===true;
+            if(verified&&!r.ytd_source_reference) throw new Error('Verified YTD needs source reference');
+            await rpc('thr_upsert_tax_ytd_opening_v118',{p_org_id:ORG_ID,p_employee_id:e.employee_id,p_tax_year:yearNow(),p_through_month:Number(r.ytd_through_month),p_gross:Number(r.ytd_gross||0),p_epf:Number(r.ytd_epf||0),p_mtd:Number(r.ytd_mtd||0),p_zakat:Number(r.ytd_zakat||0),p_allowable_deductions:Number(r.ytd_deductions||0),p_verified:verified,p_source_reference:r.ytd_source_referen
