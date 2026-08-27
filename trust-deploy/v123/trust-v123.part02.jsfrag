@@ -1,0 +1,165 @@
+v class="thr117-sub">${esc(h.holiday_type)}${h.worksite_name?' · '+esc(h.worksite_name):''}</div></div>${h.paid?tag('Paid','ok'):tag('Unpaid')}</div>`).join('')||'<div class="thr117-empty">No holidays configured.</div>'}</div></div>`;
+  } else {
+    const rows=ts.slice(0,120);
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>Last 31 days</h2><span class="thr117-sub">${rows.length} timesheet rows</span></div><div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Date</th><th>Employee</th><th>Schedule</th><th>In / Out</th><th>Hours</th><th>OT</th><th>Status</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${fmtDate(x.work_date)}</td><td><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.employee_code)}</div></td><td>${esc(x.day_type)}<div class="thr117-sub">${esc(x.shift_code||x.schedule_source||'—')}</div></td><td>${fmtDateTime(x.first_in)}<div class="thr117-sub">${fmtDateTime(x.last_out)}</div></td><td>${hours(x.worked_minutes)}h</td><td>${hours(x.overtime_minutes)}h</td><td>${tag(x.status,x.status==='complete'?'ok':'warn')}</td></tr>`).join('')}</tbody></table></div><div class="thr117-mobile-cards">${rows.slice(0,50).map(x=>`<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${fmtDate(x.work_date)} · ${esc(x.day_type)}</div></div>${tag(x.status,x.status==='complete'?'ok':'warn')}</div><div class="row-meta"><span>${hours(x.worked_minutes)} worked</span><span>${hours(x.overtime_minutes)} OT</span></div></div>`).join('')}</div></div>`;
+  }
+  return `${head('ATTENDANCE','Attendance','Daily attendance, exceptions, roster, worksite controls and overtime rules.',actions)}
+  <div class="thr117-grid thr117-kpis">
+    ${kpi('Complete',complete,`${incomplete} incomplete/open`)}
+    ${kpi('OT Hours',hours(ot),'last 31 days')}
+    ${kpi('Exceptions',Number(ex.pending_corrections||0)+Number(ex.pending_ot||0),'pending review')}
+    ${kpi('Schedule Coverage',`${r.coverage_pct ?? '—'}%`,`${r.fallback_schedule_cells ?? 0} fallback cells`)}
+  </div><div class="thr117-section">${body}</div>`;
+}
+
+function leave(){
+  const b=state.leaveBundle||{}, req=b.requests||[], bal=b.balances||[], types=b.leave_types||[];
+  const pending=req.filter(x=>x.status==='pending').length;
+  const annual=bal.filter(x=>['ANL','AL'].includes(String(x.leave_type_code||'').toUpperCase()));
+  const totalAnnual=annual.reduce((a,x)=>a+Number(x.available_days||0),0);
+  const actions=`<button class="thr117-btn" data-action="leave-sub" data-sub="overview">Overview</button><button class="thr117-btn" data-action="leave-sub" data-sub="requests">Requests</button><button class="thr117-btn" data-action="leave-sub" data-sub="balances">Balances</button><button class="thr117-btn" data-action="leave-sub" data-sub="setup">Policy Setup</button>`;
+  let body='';
+  if(state.leaveSub==='requests'){
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>Leave requests</h2>${tag(`${pending} pending`,pending?'warn':'ok')}</div><div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Leave</th><th>Dates</th><th>Days</th><th>Status</th></tr></thead><tbody>${req.map(x=>`<tr><td><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.employee_code)}</div></td><td>${esc(x.leave_type)}</td><td>${fmtDate(x.start_date)} → ${fmtDate(x.end_date)}</td><td>${esc(x.requested_days ?? '—')}</td><td>${tag(x.status,x.status==='pending'?'warn':x.status==='approved'?'ok':'')}</td></tr>`).join('')}</tbody></table></div>${!req.length?'<div class="thr117-empty">No leave requests yet.</div>':''}</div>`;
+  } else if(state.leaveSub==='balances'){
+    body=`<div class="thr117-card"><div class="thr117-section-title"><h2>${yearNow()} Leave balances</h2><span class="thr117-sub">${bal.length} employee/type rows</span></div><div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Leave Type</th><th>Balance</th></tr></thead><tbody>${bal.map(x=>`<tr><td><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.employee_code)}</div></td><td>${esc(x.leave_type_name)}</td><td>${x.requires_balance?`${esc(x.available_days)} days`:'No balance limit'}</td></tr>`).join('')}</tbody></table></div><div class="thr117-mobile-cards">${bal.map(x=>`<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.leave_type_name)}</div></div><b>${x.requires_balance?`${esc(x.available_days)}d`:'∞'}</b></div></div>`).join('')}</div></div>`;
+  } else if(state.leaveSub==='setup'){
+    const rules=b.rules||[];
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Leave types</h2></div><div class="thr117-list">${types.map(x=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(x.code)} · ${esc(x.name)}</div><div class="thr117-sub">${esc(x.category)} · ${x.is_paid?'Paid':'Unpaid'} · ${x.allow_half_day?'Half-day allowed':'Full day only'}</div></div>${x.attachment_required?tag('Attachment','warn'):tag('Active','ok')}</div>`).join('')}</div></div><div class="thr117-card"><div class="thr117-section-title"><h2>Statutory policy</h2></div>${rules.map(x=>`<div class="thr117-statline"><span>${esc(x.leave_type_name)}</span><b>${x.entitlement_mode==='service_tier'?'Service tier':x.entitlement_mode==='unlimited'?'Unlimited':`${esc(x.annual_entitlement_days)} days`}</b></div>`).join('')}</div></div>`;
+  } else {
+    const recent=req.slice(0,8);
+    body=`<div class="thr117-grid thr117-two"><div class="thr117-card"><div class="thr117-section-title"><h2>Recent requests</h2><button class="thr117-btn" data-action="leave-sub" data-sub="requests">View all</button></div><div class="thr117-list">${recent.length?recent.map(x=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(x.employee_name)}</div><div class="thr117-sub">${esc(x.leave_type)} · ${fmtDate(x.start_date)} → ${fmtDate(x.end_date)}</div></div>${tag(x.status,x.status==='pending'?'warn':x.status==='approved'?'ok':'')}</div>`).join(''):'<div class="thr117-empty">No leave requests yet.</div>'}</div></div><div class="thr117-card"><div class="thr117-section-title"><h2>Policy readiness</h2></div><div class="thr117-statline"><span>Leave types</span><b>${types.length}</b></div><div class="thr117-statline"><span>Active assignments</span><b>${(b.assignments||[]).length}/${state.employees.filter(e=>e.employment_status==='active').length}</b></div><div class="thr117-statline"><span>Annual leave balance total</span><b>${totalAnnual.toFixed(1)} days</b></div><div class="thr117-statline"><span>Policy</span><b>${esc(b.policies?.[0]?.name||'—')}</b></div></div></div>`;
+  }
+  return `${head('LEAVE','Leave','Statutory leave policy, balances, requests and eligibility setup.',actions)}
+  <div class="thr117-grid thr117-kpis">
+    ${kpi('Pending Requests',pending,'awaiting decision')}
+    ${kpi('Leave Types',types.length,'configured')}
+    ${kpi('Policy Assignments',(b.assignments||[]).length,'active employees')}
+    ${kpi('Annual Balance',totalAnnual.toFixed(1),'days across employees')}
+  </div><div class="thr117-section">${body}</div>`;
+}
+
+
+function taxEmployees(){ return Array.isArray(state.taxAdminBundle?.employees)?state.taxAdminBundle.employees:[]; }
+function pcbSnapshots(){ return Array.isArray(state.taxAdminBundle?.pcb_snapshots)?state.taxAdminBundle.pcb_snapshots:[]; }
+function boolLabel(v){ return v===true?'Yes':v===false?'No':'—'; }
+function taxProfileLabel(p){
+  if(!p) return 'Not configured';
+  const res=String(p.residence_status||'').replace('_',' ');
+  return `${res || '—'} · Cat ${p.mtd_category || '—'}`;
+}
+function tp3Label(t){
+  if(!t) return 'Not recorded';
+  const typ=String(t.source_form||t?.metadata?.declaration_type||'TP3').replaceAll('_',' ');
+  return `${typ} · ${String(t.status||'pending')}`;
+}
+function ytdLabel(y){
+  if(!y) return 'Not recorded';
+  return `Through month ${Number(y.through_month||0)} · ${y.verified?'Verified':'Unverified'}`;
+}
+function pcbAmount(s){
+  return Number(s?.result_snapshot?.total_mtd_payable ?? s?.result_snapshot?.net_mtd ?? 0);
+}
+function finalPayComponentAmount(c,code){
+  if(code==='salary_balance') return Number(c.salary_due||0);
+  if(code==='annual_leave_payout') return Number(c.annual_leave_amount||0);
+  if(code==='notice_pay') return Number(c.notice_amount||0);
+  if(code==='termination_benefit') return Number(c.termination_benefit_amount||0);
+  return 0;
+}
+function parseCSV(text){
+  const rows=[]; let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i],next=text[i+1];
+    if(ch==='"'){
+      if(quoted&&next==='"'){cell+='"';i++;}
+      else quoted=!quoted;
+    } else if(ch===','&&!quoted){row.push(cell);cell='';}
+    else if((ch==='\n'||ch==='\r')&&!quoted){
+      if(ch==='\r'&&next==='\n') i++;
+      row.push(cell);cell='';
+      if(row.some(v=>String(v).trim()!=='')) rows.push(row);
+      row=[];
+    } else cell+=ch;
+  }
+  if(cell!==''||row.length){row.push(cell);if(row.some(v=>String(v).trim()!==''))rows.push(row);}
+  if(rows.length<2) return [];
+  const headers=rows[0].map(x=>String(x).trim());
+  return rows.slice(1).map(r=>Object.fromEntries(headers.map((h,i)=>[h,String(r[i]??'').trim()])));
+}
+function csvBool(v){
+  const s=String(v??'').trim().toLowerCase();
+  if(['1','true','yes','y'].includes(s)) return true;
+  if(['0','false','no','n'].includes(s)) return false;
+  return null;
+}
+function numOrNull(v){
+  if(v===null||v===undefined||String(v).trim()==='') return null;
+  const n=Number(v); return Number.isFinite(n)?n:null;
+}
+
+function payroll(){
+  const runs=state.payrollRuns||[];
+  const liveRuns=runs.filter(x=>x.run_mode==='payroll');
+  const latest=liveRuns[0];
+  const setup=state.salaryProfiles.filter(x=>x.profile).length;
+  const payrollPop=payrollEmployees().length;
+  const {blockers,pending,statutory,setup:setupBlockers}=payrollCounts(latest);
+  const fp=finalPayCases();
+  const fpOpen=fp.filter(x=>!['finalized','cancelled'].includes(x.status)).length;
+  const fpReview=fp.filter(x=>x.status==='review').length;
+  const fpBlocked=fp.filter(x=>Number(x.blocker_count||0)>0 || x.tax_clearance_requirement==='review_required' || (x.tax_clearance_requirement==='required'&&x.tax_clearance_status!=='cleared')).length;
+  const tx=taxEmployees();
+  const profiles=tx.filter(x=>x.tax_profile).length;
+  const tpApproved=tx.filter(x=>x.tp3?.status==='approved'&&x.tp3?.verified).length;
+  const tpPending=tx.filter(x=>x.tp3?.status==='pending').length;
+  const ytdVerified=tx.filter(x=>x.ytd_opening?.verified).length;
+  const snaps=pcbSnapshots();
+  let lifecycle='';
+  if(latest?.status==='draft' && latest?.period_closed){
+    lifecycle=`<button class="thr117-btn" data-action="submit-review" data-id="${esc(latest.id)}">Submit for Review</button>`;
+  } else if(latest?.status==='review'){
+    lifecycle=`<button class="thr117-btn" data-action="return-draft" data-id="${esc(latest.id)}">Return to Draft</button>${['owner','admin','payroll'].includes(state.membership.role)?`<button class="thr117-btn primary" data-action="approve-payroll" data-id="${esc(latest.id)}">Approve & Lock</button>`:''}`;
+  }
+  const tabs=`<button class="thr117-btn ${state.payrollSub==='runs'?'primary':''}" data-action="payroll-sub" data-sub="runs">Payroll Runs</button><button class="thr117-btn ${state.payrollSub==='tax'?'primary':''}" data-action="payroll-sub" data-sub="tax">PCB & Tax</button><button class="thr117-btn ${state.payrollSub==='finalpay'?'primary':''}" data-action="payroll-sub" data-sub="finalpay">Final Pay ${fpOpen?`(${fpOpen})`:''}</button>`;
+  const actions=`${tabs}<button class="thr117-btn" data-action="legacy-payroll">Detailed Payroll</button>${state.payrollSub==='runs'?lifecycle:''}`;
+  let body='';
+
+  if(state.payrollSub==='tax'){
+    body=`
+    <div class="thr117-grid thr117-kpis">
+      ${kpi('Tax Profiles',`${profiles}/${tx.length}`,'configured payroll participants')}
+      ${kpi('TP3 / Zero',tpApproved,`${tpPending} pending review`)}
+      ${kpi('Teras YTD',ytdVerified,'verified migration openings')}
+      ${kpi('PCB Snapshots',snaps.length,`${Number(state.taxAdminBundle?.pcb_history_count||0)} audit history event(s)`)}
+    </div>
+    <div class="thr117-callout thr117-section"><b>PCB setup never assumes employee facts.</b><div class="thr117-sub">Use verified payment date, tax profile, TP3 or zero declaration where applicable, and Teras current-employer YTD opening only from actual records. TRUST keeps payroll approval blocked until the required evidence is complete.</div><div class="thr117-toolbar" style="margin-top:12px"><button class="thr117-btn" data-action="tax-template">Download CSV Template</button><button class="thr117-btn" data-action="tax-import">Import Tax Setup CSV</button>${latest?`<button class="thr117-btn primary" data-action="calculate-pcb" data-id="${esc(latest.id)}" ${latest.payment_date_verified?'':'disabled'}>Calculate PCB</button>`:''}</div></div>
+    ${latest?`<div class="thr117-card thr117-section"><div class="thr117-section-title"><h2>Current payroll deduction month</h2><button class="thr117-btn primary" data-action="payment-date" data-id="${esc(latest.id)}">${latest.payment_date?'Edit / Verify Date':'Set Payment Date'}</button></div><div class="thr117-grid thr117-three"><div><div class="thr117-sub">Payroll period</div><div class="thr117-name">${fmtDate(latest.period_start)} → ${fmtDate(latest.period_end)}</div></div><div><div class="thr117-sub">Payment date</div><div class="thr117-name">${fmtDate(latest.payment_date)}</div></div><div><div class="thr117-sub">PCB deduction month</div><div class="thr117-name">${latest.payment_date_verified&&latest.payment_date?new Intl.DateTimeFormat('en-MY',{month:'long',year:'numeric'}).format(new Date(latest.payment_date+'T00:00:00')):'Awaiting verified payment date'}</div></div></div></div>`:''}
+    <div class="thr117-card thr117-section">
+      <div class="thr117-section-title"><h2>Employee tax onboarding · ${yearNow()}</h2><span class="thr117-sub">${tx.length} payroll participants</span></div>
+      ${tx.length?`<div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Tax Profile</th><th>TP3 / Zero</th><th>Teras YTD</th><th>Action</th></tr></thead><tbody>${tx.map(e=>`<tr><td><div class="thr117-name">${esc(e.employee_name)}</div><div class="thr117-sub">${esc(e.employee_code)} · Joined ${fmtDate(e.hire_date)}</div></td><td>${tag(taxProfileLabel(e.tax_profile),e.tax_profile?'ok':'warn')}</td><td>${tag(tp3Label(e.tp3),e.tp3?.status==='approved'&&e.tp3?.verified?'ok':e.tp3?'warn':'')}</td><td>${tag(ytdLabel(e.ytd_opening),e.ytd_opening?.verified?'ok':e.ytd_opening?'warn':'')}</td><td><button class="thr117-btn" data-action="tax-employee" data-id="${esc(e.employee_id)}">Open Setup</button></td></tr>`).join('')}</tbody></table></div><div class="thr117-mobile-cards">${tx.map(e=>`<div class="thr117-mobile-row"><div class="row-top"><div><div class="thr117-name">${esc(e.employee_name)}</div><div class="thr117-sub">${esc(e.employee_code)}</div></div>${tag(e.tax_profile?'Profile set':'Profile missing',e.tax_profile?'ok':'warn')}</div><div class="row-meta"><span>${esc(tp3Label(e.tp3))}</span><span>${esc(ytdLabel(e.ytd_opening))}</span></div><button class="thr117-btn" style="width:100%;margin-top:10px" data-action="tax-employee" data-id="${esc(e.employee_id)}">Open Tax Setup</button></div>`).join('')}</div>`:'<div class="thr117-empty">No payroll participants.</div>'}
+    </div>
+    <div class="thr117-card thr117-section">
+      <div class="thr117-section-title"><h2>Current PCB calculation snapshots</h2><span class="thr117-sub">LHDN MTD 2026 engine · v119 non-destructive audit architecture</span></div>
+      ${snaps.length?`<div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Deduction month</th><th>PCB</th><th>Engine</th><th>Calculated</th></tr></thead><tbody>${snaps.map(s=>`<tr><td><div class="thr117-name">${esc(s.employee_name)}</div><div class="thr117-sub">${esc(s.employee_code)}</div></td><td>${esc(String(s.tax_month).padStart(2,'0'))}/${esc(s.tax_year)}</td><td><b>${money(pcbAmount(s))}</b></td><td>${esc(s.engine_version)}</td><td>${fmtDateTime(s.created_at)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="thr117-empty">No PCB snapshots yet. Calculation remains blocked until required worker tax data is supplied.</div>'}
+    </div>`;
+  } else if(state.payrollSub==='finalpay'){
+    const canCreate=['owner','admin','hr','payroll'].includes(state.membership.role);
+    body=`
+    <div class="thr117-grid thr117-kpis">
+      ${kpi('Final Pay Cases',fp.length,`${fpOpen} open`)}
+      ${kpi('In Review',fpReview,'awaiting approval')}
+      ${kpi('Readiness Holds',fpBlocked,'tax / calculation review')}
+      ${kpi('Engine','v118 / v119','legal math / audit controls')}
+    </div>
+    <div class="thr117-callout thr117-section"><b>Final Pay is entitlement-first, payroll-second.</b><div class="thr117-sub">Salary balance, vested annual leave, notice and termination benefits are calculated separately, explicitly reviewed for uncommon statutory/tax treatment, then paid through a same-day off-cycle payroll.</div>${canCreate?`<button class="thr117-btn primary" style="margin-top:12px" data-action="new-final-pay">New Final Pay Case</button>`:''}</div>
+    <div class="thr117-card thr117-section">
+      <div class="thr117-section-title"><h2>Final Pay cases</h2>${canCreate?`<button class="thr117-btn primary" data-action="new-final-pay">New Case</button>`:''}</div>
+      ${fp.length?`<div class="thr117-table-wrap"><table class="thr117-table"><thead><tr><th>Employee</th><th>Termination</th><th>Entitlement</th><th>Tax clearance</th><th>Status</th><th>Payroll</th><th>Action</th></tr></thead><tbody>${fp.map(c=>{
+        const run=(state.payrollRuns||[]).find(r=>r.id===c.payroll_run_id);
+        const needsTax=c.tax_clearance_requirement==='review_required'||(c.tax_clearance_requirement==='required'&&c.tax_clearance_status!=='cleared');
+        let act=`<button class="thr117-btn" data-action="final-pay-detail" data-id="${esc(c.id)}">View</button> <button class="thr117-btn" data-action="final-pay-components" data-id="${esc(c.id)}">Component Review</button>`;
+        if(c.status==='draft') act+=` <button class="thr117-btn" data-action="final-pay-tax" data-id="${esc(c.id)}">Tax Clearance</button> <button class="thr117-btn primary" data-action="submit-final-pay" data-id="${esc(c.id)}">Submit</button>`;
+        if(c.status==='review') act+=` <button class="thr117-btn" data-action="final-pay-tax" data-id="${esc(c.id)}">Tax Clearance</button>${['owner','admin','payroll'].includes(state.membership.role)?` <button class="thr117-btn primary" data-action="approve-final-pay" data-id="${esc(c.id)}" ${needsTax?'disabled':''}>Approve Entitlement</button>`:''}`;
+        if(c.status==='approved'&&!c.payroll_run_id) act+=` <button class="thr117-btn primary" data-action="prepare-final-pay-payroll" data-id="${esc(c.id)}">Prepare Off-cycle Payroll</button>`;
+        if(c.status==='approved'&&run?.status==='draft') act+=` <button class="thr117-btn" data-action="payment-date" data-id="${esc(run.id)}">${run
