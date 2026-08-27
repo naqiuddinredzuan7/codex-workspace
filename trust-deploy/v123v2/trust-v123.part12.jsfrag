@@ -1,0 +1,148 @@
+ce||null});
+          }
+          if(r.declaration_type){
+            if(!r.declaration_name||!r.tp3_source_reference) throw new Error('Declaration name/source required');
+            const vals=[r.tp3_gross,r.tp3_epf,r.tp3_mtd,r.tp3_zakat,r.tp3_deductions].map(v=>Number(v||0));
+            if(r.declaration_type==='zero_declaration'&&vals.some(v=>v!==0)) throw new Error('Zero declaration must contain zero values');
+            await rpc('thr_record_tp3_admin_v119',{p_org_id:ORG_ID,p_employee_id:e.employee_id,p_tax_year:yearNow(),p_declaration_type:r.declaration_type,p_previous_gross:vals[0],p_previous_epf:vals[1],p_previous_mtd:vals[2],p_previous_zakat:vals[3],p_previous_deductions:vals[4],p_declaration_name:r.declaration_name,p_source_reference:r.tp3_source_reference});
+          }
+          ok++;
+        }catch(err){console.warn('Tax import row failed',r.employee_code,err);failed++;}
+      }
+      modal.remove();await loadData(false);state.payrollSub='tax';render();toast(`${ok} tax row(s) imported · ${failed} failed. Declarations remain pending until approved.`);
+    }finally{setLoading(false);}
+  };
+}
+
+function openFinalPayComponentModal(id){
+  const c=finalPayCases().find(x=>x.id===id);if(!c)return;
+  const rules=Array.isArray(state.finalPayBundle?.component_rules)?state.finalPayBundle.component_rules:[];
+  const overrides=c.component_treatment_overrides||{};
+  const modal=document.createElement('div');modal.className='thr117-modal';
+  modal.innerHTML=`<div class="thr117-modal-card thr117-modal-wide"><div class="thr117-eyebrow">FINAL PAY STATUTORY CLASSIFICATION</div><h3>${esc(c.employee_name)}</h3><p class="thr117-sub">Review uncommon SOCSO/tax characterisation explicitly. The legal entitlement calculation is not changed here.</p><div class="thr117-component-list">${rules.map(r=>{
+    const o=overrides[r.component_code]||{},amt=finalPayComponentAmount(c,r.component_code);
+    const needs=r.socso_treatment==='review'||['review','compensation_review'].includes(r.pcb_treatment);
+    return `<div class="thr117-form-section" data-component="${esc(r.component_code)}"><div class="thr117-section-title"><div><h2>${esc(r.label)}</h2><div class="thr117-sub">${esc(r.component_code)} · ${money(amt)}</div></div>${tag(needs?'Manual review':'Rule-based',needs?'warn':'ok')}</div><div class="thr117-grid thr117-three"><div><div class="thr117-sub">EPF</div><div class="thr117-name">${esc(r.epf_treatment)}</div></div><div><div class="thr117-sub">SOCSO</div><div class="thr117-name">${esc(r.socso_treatment)}</div></div><div><div class="thr117-sub">PCB / Tax</div><div class="thr117-name">${esc(r.pcb_treatment)}</div></div></div><div class="thr117-form-grid">
+      <label>SOCSO treatment<select class="thr117-select fp-socso"><option value="">Follow / unresolved rule</option><option value="true" ${o.socso_included===true?'selected':''}>Include</option><option value="false" ${o.socso_included===false?'selected':''}>Exclude</option></select></label>
+      <label>Taxable amount<input class="thr117-input fp-taxable" type="number" min="0" step="0.01" value="${o.taxable_amount??''}" placeholder="Only if reviewed"></label>
+      <label>Exempt amount<input class="thr117-input fp-exempt" type="number" min="0" step="0.01" value="${o.exempt_amount??''}" placeholder="Only if reviewed"></label>
+      <label>Notes<input class="thr117-input fp-notes" value="${esc(o.notes||'')}" placeholder="Basis / evidence / reviewer note"></label>
+    </div><div class="thr117-check-grid"><label class="thr117-check"><input class="fp-reviewed" type="checkbox" ${o.reviewed?'checked':''}><span><b>Component reviewed</b></span></label><label class="thr117-check"><input class="fp-tax-reviewed" type="checkbox" ${o.tax_reviewed?'checked':''}><span><b>Tax treatment reviewed</b></span></label></div><button class="thr117-btn fp-component-save" data-code="${esc(r.component_code)}" style="margin-top:12px">Save Component Review</button></div>`;
+  }).join('')}</div><div class="thr117-modal-actions"><button class="thr117-btn primary" id="fp-component-close">Close</button></div></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#fp-component-close').onclick=()=>modal.remove();
+  modal.querySelectorAll('.fp-component-save').forEach(btn=>btn.onclick=async()=>{
+    const box=btn.closest('[data-component]'),code=btn.dataset.code;
+    const sv=box.querySelector('.fp-socso').value;
+    const taxable=box.querySelector('.fp-taxable').value,exempt=box.querySelector('.fp-exempt').value;
+    try{setLoading(true);await rpc('thr_set_final_pay_component_review_v118',{p_case_id:id,p_component_code:code,p_reviewed:box.querySelector('.fp-reviewed').checked,p_socso_included:sv===''?null:sv==='true',p_tax_reviewed:box.querySelector('.fp-tax-reviewed').checked,p_taxable_amount:taxable===''?null:Number(taxable),p_exempt_amount:exempt===''?null:Number(exempt),p_notes:box.querySelector('.fp-notes').value||null});modal.remove();await loadData(false);state.payrollSub='finalpay';render();toast('Final Pay component review saved.');}
+    catch(err){toast(err.message||'Unable to save component review.');}finally{setLoading(false);}
+  });
+}
+
+function openFinalPayModal(){
+  const employees=payrollEmployees();
+  if(!employees.length){toast('No payroll participants available.');return;}
+  const liveRuns=(state.payrollRuns||[]).filter(r=>r.run_mode==='payroll'&&r.status==='draft');
+  const suggested=liveRuns[0];
+  const modal=document.createElement('div'); modal.className='thr117-modal';
+  modal.innerHTML=`<div class="thr117-modal-card thr117-modal-wide"><div class="thr117-eyebrow">FINAL PAY · V118</div><h3>New Final Pay Case</h3><p class="thr117-sub">Create a calculation case only. This does not terminate the employee or change employment status.</p><div class="thr117-form-grid">
+    <label>Employee<select id="fp-employee" class="thr117-select">${employees.map(e=>`<option value="${esc(e.id)}">${esc(e.employee_code)} · ${esc(e.full_name)}</option>`).join('')}</select></label>
+    <label>Termination date<input id="fp-date" class="thr117-input" type="date" value="${todayISO()}"></label>
+    <label>Wage period start<input id="fp-start" class="thr117-input" type="date" value="${esc(suggested?.period_start||todayISO())}"></label>
+    <label>Wage period end<input id="fp-end" class="thr117-input" type="date" value="${esc(suggested?.period_end||todayISO())}"></label>
+    <label>Reason<select id="fp-reason" class="thr117-select"><option value="employer_operational">Employer operational</option><option value="contract_expiry">Contract expiry</option><option value="voluntary_resignation">Voluntary resignation</option><option value="mutual_separation">Mutual separation</option><option value="misconduct_after_due_inquiry">Misconduct after due inquiry</option><option value="other">Other</option></select></label>
+    <label>Initiated by<select id="fp-party" class="thr117-select"><option value="employer">Employer</option><option value="employee">Employee</option><option value="mutual">Mutual</option><option value="expiry">Contract expiry</option><option value="other">Other</option></select></label>
+    <label>Notice treatment<select id="fp-notice" class="thr117-select"><option value="served">Notice served</option><option value="full_payment_in_lieu">Full payment in lieu</option><option value="partial_notice">Partial notice</option><option value="waived">Waived</option><option value="not_applicable">Not applicable</option></select></label>
+    <label>Variable wages due<input id="fp-variable" class="thr117-input" type="number" min="0" step="0.01" value="0"></label>
+  </div><div class="thr117-callout" style="margin-top:14px"><b>Tax clearance starts as Review Required.</b><div class="thr117-sub">HR/Payroll must explicitly decide whether CP22A/CP22B clearance is required before Final Pay can be approved.</div></div><div class="thr117-modal-actions"><button class="thr117-btn" id="fp-cancel">Cancel</button><button class="thr117-btn primary" id="fp-create">Create Case</button></div></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#fp-cancel').onclick=()=>modal.remove();
+  modal.querySelector('#fp-create').onclick=async()=>{
+    const body={p_org_id:ORG_ID,p_employee_id:modal.querySelector('#fp-employee').value,p_termination_date:modal.querySelector('#fp-date').value,p_wage_period_start:modal.querySelector('#fp-start').value,p_wage_period_end:modal.querySelector('#fp-end').value,p_reason:modal.querySelector('#fp-reason').value,p_initiated_by:modal.querySelector('#fp-party').value,p_notice_treatment:modal.querySelector('#fp-notice').value,p_notice_override:null,p_annual_leave_days_override:null,p_variable_wages_due:Number(modal.querySelector('#fp-variable').value||0),p_lawful_deductions:0,p_last12_wages:null};
+    if(!body.p_termination_date||!body.p_wage_period_start||!body.p_wage_period_end){toast('Complete all dates.');return;}
+    try{setLoading(true);await rpc('thr_create_final_pay_case_v118',body);modal.remove();await loadData(false);state.payrollSub='finalpay';render();toast('Final Pay case created.');}
+    catch(e){toast(e.message||'Unable to create Final Pay case.');}finally{setLoading(false);}
+  };
+}
+
+function openFinalPayDetail(id){
+  const c=finalPayCases().find(x=>x.id===id); if(!c) return;
+  const modal=document.createElement('div'); modal.className='thr117-modal';
+  const blockers=Array.isArray(c.blockers)?c.blockers:[];
+  const warningText=Array.isArray(c.warnings)?c.warnings.join(' · '):'';
+  modal.innerHTML=`<div class="thr117-modal-card thr117-modal-wide"><div class="thr117-eyebrow">FINAL PAY · ${esc(String(c.status||'').toUpperCase())}</div><h3>${esc(c.employee_name)}</h3><p class="thr117-sub">${esc(c.employee_code)} · Termination ${fmtDate(c.termination_date)}</p><div class="thr117-grid thr117-two" style="margin-top:14px"><div class="thr117-card"><div class="thr117-statline"><span>Salary balance</span><b>${money(c.salary_due)}</b></div><div class="thr117-statline"><span>Annual leave</span><b>${Number(c.annual_leave_days||0)} day(s) · ${money(c.annual_leave_amount)}</b></div><div class="thr117-statline"><span>Notice pay</span><b>${money(c.notice_amount)}</b></div><div class="thr117-statline"><span>Termination benefit</span><b>${money(c.termination_benefit_amount)}</b></div><div class="thr117-statline"><span>Gross entitlement</span><b>${money(c.gross_entitlement)}</b></div></div><div class="thr117-card"><div class="thr117-statline"><span>Wage period</span><b>${fmtDate(c.wage_period_start)} → ${fmtDate(c.wage_period_end)}</b></div><div class="thr117-statline"><span>Wages due</span><b>${fmtDate(c.wage_payment_due_date)}</b></div><div class="thr117-statline"><span>Tax clearance</span><b>${esc(finalPayTaxLabel(c))}</b></div><div class="thr117-statline"><span>Off-cycle payroll</span><b>${c.payroll_run_id?'Prepared':'Not prepared'}</b></div></div></div>${blockers.length?`<div class="thr117-error" style="margin-top:14px"><b>${blockers.length} blocker(s)</b><div class="thr117-sub" style="color:inherit">${blockers.map(x=>esc(typeof x==='string'?x:(x.code||JSON.stringify(x)))).join(' · ')}</div></div>`:''}${warningText?`<div class="thr117-callout" style="margin-top:14px"><b>Review notes</b><div class="thr117-sub">${esc(warningText)}</div></div>`:''}<div class="thr117-modal-actions"><button class="thr117-btn primary" id="fp-detail-close">Close</button></div></div>`;
+  document.body.appendChild(modal);modal.querySelector('#fp-detail-close').onclick=()=>modal.remove();
+}
+
+function openFinalPayTaxModal(id){
+  const c=finalPayCases().find(x=>x.id===id); if(!c) return;
+  const modal=document.createElement('div'); modal.className='thr117-modal';
+  modal.innerHTML=`<div class="thr117-modal-card"><div class="thr117-eyebrow">TAX CLEARANCE</div><h3>Final Pay clearance review</h3><p class="thr117-sub">${esc(c.employee_code)} · ${esc(c.employee_name)}</p><label class="thr117-field-label">Requirement<select id="fp-tax-req" class="thr117-select"><option value="review_required" ${c.tax_clearance_requirement==='review_required'?'selected':''}>Review required</option><option value="not_required" ${c.tax_clearance_requirement==='not_required'?'selected':''}>Not required</option><option value="required" ${c.tax_clearance_requirement==='required'?'selected':''}>Required</option></select></label><label class="thr117-field-label">Status<select id="fp-tax-status" class="thr117-select"><option value="not_applicable" ${c.tax_clearance_status==='not_applicable'?'selected':''}>Not applicable</option><option value="pending" ${c.tax_clearance_status==='pending'?'selected':''}>Pending / Hold</option><option value="cleared" ${c.tax_clearance_status==='cleared'?'selected':''}>Cleared</option></select></label><label class="thr117-field-label">Reference<input id="fp-tax-ref" class="thr117-input" value="${esc(c.tax_clearance_reference||'')}" placeholder="CP22A/CP22B / SPC reference if applicable"></label><div class="thr117-modal-actions"><button class="thr117-btn" id="fp-tax-cancel">Cancel</button><button class="thr117-btn primary" id="fp-tax-save">Save Review</button></div></div>`;
+  document.body.appendChild(modal);modal.querySelector('#fp-tax-cancel').onclick=()=>modal.remove();
+  modal.querySelector('#fp-tax-save').onclick=async()=>{
+    try{setLoading(true);await rpc('thr_set_final_pay_tax_clearance_v118',{p_case_id:id,p_requirement:modal.querySelector('#fp-tax-req').value,p_status:modal.querySelector('#fp-tax-status').value,p_reference:modal.querySelector('#fp-tax-ref').value||null});modal.remove();await loadData(false);render();toast('Tax clearance review saved.');}
+    catch(e){toast(e.message||'Unable to save tax clearance review.');}finally{setLoading(false);}
+  };
+}
+
+function openPinModal(id){
+  const e=state.employees.find(x=>x.id===id); if(!e) return;
+  const modal=document.createElement('div'); modal.className='thr117-modal';
+  modal.innerHTML=`<div class="thr117-modal-card"><div class="thr117-eyebrow">WORKFORCE ACCESS</div><h3>Set / Reset PIN</h3><p class="thr117-sub">${esc(e.employee_code)} · ${esc(e.full_name)}</p><label style="display:block;margin-top:16px;font-weight:800">New PIN / password</label><input id="thr117-pin-value" class="thr117-input" style="width:100%;margin-top:7px" type="password" minlength="8" maxlength="72" placeholder="Minimum 8 characters"><div class="thr117-sub" style="margin-top:7px">This updates the employee Workforce login through the existing secured Edge Function.</div><div class="thr117-modal-actions"><button class="thr117-btn" id="thr117-pin-cancel">Cancel</button><button class="thr117-btn primary" id="thr117-pin-save">Save PIN</button></div></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#thr117-pin-cancel').onclick=()=>modal.remove();
+  modal.querySelector('#thr117-pin-save').onclick=async()=>{
+    const pin=modal.querySelector('#thr117-pin-value').value;
+    if(pin.length<8){toast('PIN must be at least 8 characters.');return;}
+    try{
+      setLoading(true);
+      const result=await apiFetch(CFG.edgeUrl,{
+        method:'POST',
+        headers:{'apikey':KEY,'Authorization':`Bearer ${state.session.access_token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({
+          action:'provision_employee',
+          organization_id:ORG_ID,
+          employee_code:e.employee_code,
+          full_name:e.full_name,
+          phone:e.phone||null,
+          email:e.email||null,
+          department:e.department||null,
+          position_title:e.position_title||null,
+          default_worksite_id:e.default_worksite_id||null,
+          pin
+        })
+      });
+      modal.remove();
+      await loadData(false);
+      render();
+      toast(`Workforce PIN updated for ${e.employee_code}.`);
+    }catch(err){toast(err.message||'Unable to update PIN.');}
+    finally{setLoading(false);}
+  };
+}
+
+function boot(){
+  const mount=document.getElementById('thr-v117-mount'); if(!mount) return;
+  let attempts=0;
+  const timer=setInterval(async()=>{
+    attempts++;
+    const session=getStoredSession();
+    if(session){
+      clearInterval(timer);
+      state.session=session;
+      // Existing portal has already authenticated; open the upgraded HR shell automatically.
+      await openApp();
+      return;
+    }
+    if(attempts>=30){
+      clearInterval(timer);
+      render();
+    }
+  },500);
+}
+
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+
+})();
