@@ -1,0 +1,337 @@
+
+(function(){
+'use strict';
+
+const CFG = window.THRTrustV123 || window.THRTrustV119 || window.THRTrustV117 || {};
+const ORG_ID = CFG.organizationId;
+const SUPABASE_URL = CFG.supabaseUrl;
+const KEY = CFG.publishableKey;
+const REF = CFG.projectRef;
+
+const managerRoles = ['owner','admin','hr','manager','payroll'];
+const payrollRoles = ['owner','admin','hr','payroll'];
+
+const state = {
+  session:null,
+  ctx:null,
+  membership:null,
+  tab:'overview',
+  opened:false,
+  loading:false,
+  employees:[],
+  salaryProfiles:[],
+  attendanceBundle:null,
+  timesheets:[],
+  leaveBundle:null,
+  payrollRuns:[],
+  finalPayBundle:{cases:[],component_rules:[]},
+  taxAdminBundle:{employees:[],pcb_snapshots:[],pcb_history_count:0},
+  members:[],
+  worksites:[],
+  attendancePolicy:[],
+  orgModules:[],
+  shellSettings:{},
+  operationsBundle:{inbox:[],claim_categories:[],claims:[],profile_changes:[],notifications:[],claim_payroll_queue:[]},
+  payItemBundle:{definitions:[],claim_categories:[],claim_payroll_queue:[]},
+  reportCatalog:[],
+  reportData:null,
+  savedReportViews:[],
+  integrationBundle:{adapters:[],events:[]},
+  integrationTemplates:[],
+  talentBundle:{cycles:[],goals:[],reviews:[],competency_catalog:[],employee_competencies:[],courses:[],enrollments:[],certificates:[]},
+  securityPosture:{},
+  retentionBundle:{settings:[],counts:{}},
+  search:'',
+  attendanceSub:'records',
+  leaveSub:'overview',
+  payrollSub:'runs',
+  operationsSub:'inbox',
+  talentSub:'pms',
+  reportKey:'workforce',
+  reportStart:addDaysISO(-30),
+  reportEnd:todayISO(),
+  lastLoadedAt:null
+};
+
+function esc(v){
+  return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtDate(v){
+  if(!v) return '—';
+  try { return new Intl.DateTimeFormat('en-MY',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(v+'T00:00:00')); } catch { return v; }
+}
+function fmtDateTime(v){
+  if(!v) return '—';
+  try { return new Intl.DateTimeFormat('en-MY',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(v)); } catch { return v; }
+}
+function money(v){
+  const n=Number(v||0);
+  return new Intl.NumberFormat('en-MY',{style:'currency',currency:'MYR',maximumFractionDigits:2}).format(n);
+}
+function hours(mins){ return (Number(mins||0)/60).toFixed(1); }
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function addDaysISO(days){
+  const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10);
+}
+function yearNow(){ return new Date().getFullYear(); }
+function liveActiveEmployees(){ return state.employees.filter(e=>e.employment_status==='active' && !e.is_test); }
+function testerEmployees(){ return state.employees.filter(e=>e.employment_status==='active' && e.is_test); }
+function payrollEmployees(){ return state.employees.filter(e=>e.employment_status==='active' && e.payroll_participation); }
+function payrollStatus(run){ return String(run?.display_status || (run?.run_mode==='reference'?'reference':run?.status) || '—').toUpperCase(); }
+function payrollStatusKind(run){ const s=String(run?.status || ''); if(run?.run_mode==='reference') return 'warn'; return s==='approved'||s==='finalized'?'ok':s==='review'?'warn':''; }
+function payrollCounts(run){
+  const blockers=Number(run?.blocking_issue_count ?? run?.issue_count ?? 0);
+  const pending=Number(run?.pending_input_count || 0);
+  const statutory=Number(run?.statutory_blocker_count || 0);
+  const setup=Math.max(blockers-statutory,0);
+  return {blockers,pending,statutory,setup};
+}
+function payrollIssueSummary(run){
+  const {blockers,pending,statutory,setup}=payrollCounts(run);
+  if(run?.run_mode==='reference') return `${Number(run?.raw_issue_count ?? run?.issue_count ?? 0)} source warning(s)`;
+  if(run?.run_mode==='final_pay' && !blockers) return 'Off-cycle Final Pay ready';
+  const parts=[];
+  if(statutory) parts.push(`${statutory} statutory`);
+  if(setup) parts.push(`${setup} setup`);
+  if(pending) parts.push(`${pending} pending input${pending===1?'':'s'}`);
+  return parts.length?parts.join(' · '):'Ready';
+}
+function finalPayCases(){ return Array.isArray(state.finalPayBundle?.cases)?state.finalPayBundle.cases:[]; }
+function finalPayStatusKind(v){ const s=String(v||''); return s==='approved'||s==='finalized'?'ok':s==='review'?'warn':s==='cancelled'?'bad':''; }
+function finalPayTaxLabel(c){
+  if(c?.tax_clearance_requirement==='review_required') return 'Review required';
+  if(c?.tax_clearance_requirement==='required') return c?.tax_clearance_status==='cleared'?'Required · Cleared':'Required · Hold';
+  return 'Not required';
+}
+function matchingPayrollRun(c){
+  return (state.payrollRuns||[]).find(r=>r.run_mode==='payroll' && r.period_start===c.wage_period_start && r.period_end===c.wage_period_end);
+}
+
+function parsePossibleSession(raw){
+  if(!raw) return null;
+  try {
+    let obj = JSON.parse(raw);
+    if(obj && obj.access_token) return obj;
+    if(obj && obj.currentSession && obj.currentSession.access_token) return obj.currentSession;
+    if(obj && obj.session && obj.session.access_token) return obj.session;
+  } catch(e){}
+  return null;
+}
+function getStoredSession(){
+  const stores=[];
+  try{ stores.push(window.localStorage); }catch(e){}
+  try{ stores.push(window.sessionStorage); }catch(e){}
+  for(const store of stores){
+    try{
+      const preferred = [
+        `sb-${REF}-auth-token`,
+        `supabase.auth.token`
+      ];
+      for(const key of preferred){
+        const s=parsePossibleSession(store.getItem(key));
+        if(s) return s;
+      }
+      for(let i=0;i<store.length;i++){
+        const k=store.key(i);
+        if(!k) continue;
+        const raw=store.getItem(k);
+        if((k.includes('auth-token') || k.startsWith('sb-')) && raw && raw.includes('access_token')){
+          const s=parsePossibleSession(raw);
+          if(s) return s;
+        }
+      }
+    }catch(e){}
+  }
+  return null;
+}
+
+function authHeaders(profile='public'){
+  return {
+    'apikey':KEY,
+    'Authorization':`Bearer ${state.session.access_token}`,
+    'Content-Type':'application/json',
+    'Accept-Profile':profile,
+    'Content-Profile':profile
+  };
+}
+async function apiFetch(url, options={}){
+  const r=await fetch(url, options);
+  const txt=await r.text();
+  let data=null;
+  try { data=txt ? JSON.parse(txt) : null; } catch { data=txt; }
+  if(!r.ok){
+    const msg=(data && (data.message||data.error||data.hint)) || `HTTP ${r.status}`;
+    const err=new Error(msg);
+    err.status=r.status; err.payload=data;
+    throw err;
+  }
+  return data;
+}
+async function rpc(name, body={}){
+  return apiFetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+    method:'POST',
+    headers:authHeaders('public'),
+    body:JSON.stringify(body)
+  });
+}
+async function safe(promise, fallback){
+  try { return await promise; } catch(e){ console.warn('TRUST v123 optional read failed',e); return fallback; }
+}
+function toast(msg){
+  const old=document.querySelector('.thr117-toast'); if(old) old.remove();
+  const el=document.createElement('div'); el.className='thr117-toast'; el.textContent=msg;
+  document.body.appendChild(el); setTimeout(()=>el.remove(),3200);
+}
+function setLoading(on){
+  state.loading=on;
+  let el=document.getElementById('thr117-loading');
+  if(on && !el){
+    el=document.createElement('div'); el.id='thr117-loading'; el.className='thr117-loading';
+    el.innerHTML='<div><div class="thr117-spinner"></div><div style="margin-top:12px;font-weight:800;color:#292574">Loading TRUST HR…</div></div>';
+    document.body.appendChild(el);
+  }
+  if(!on && el) el.remove();
+}
+
+async function establishContext(){
+  state.session=getStoredSession();
+  if(!state.session) throw new Error('NO_SESSION');
+  state.ctx=await rpc('thr_my_context',{});
+  const memberships=Array.isArray(state.ctx?.memberships) ? state.ctx.memberships : [];
+  state.membership=memberships.find(m=>m.organization_id===ORG_ID) || memberships.find(m=>m.company_code===CFG.companyCode);
+  if(!state.membership || !managerRoles.includes(state.membership.role)){
+    throw new Error('Your account does not have manager access.');
+  }
+}
+
+async function loadData(showSpinner=true){
+  if(showSpinner) setLoading(true);
+  try{
+    await establishContext();
+    const start=addDaysISO(-31), end=todayISO(), yr=yearNow();
+    const common=[
+      safe(rpc('thr_employee_directory_v109',{p_org_id:ORG_ID}),[]),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_payroll_salary_profiles_v108',{p_org_id:ORG_ID}),[]) : Promise.resolve([]),
+      safe(rpc('thr_attendance_admin_bundle_v107',{p_org_id:ORG_ID,p_start_date:start,p_end_date:end}),{}),
+      safe(rpc('thr_attendance_timesheets_v106',{p_org_id:ORG_ID,p_start_date:start,p_end_date:end}),[]),
+      safe(rpc('thr_leave_admin_bundle_v105',{p_org_id:ORG_ID,p_year:yr}),{}),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_payroll_runs_v117',{p_org_id:ORG_ID,p_limit:24}),[]) : Promise.resolve([]),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_final_pay_admin_bundle_v118',{p_org_id:ORG_ID}),{cases:[],component_rules:[]}) : Promise.resolve({cases:[],component_rules:[]}),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_tax_admin_bundle_v119',{p_org_id:ORG_ID,p_tax_year:yr}),{employees:[],pcb_snapshots:[],pcb_history_count:0}) : Promise.resolve({employees:[],pcb_snapshots:[],pcb_history_count:0}),
+      ['owner','admin'].includes(state.membership.role) ? safe(rpc('thr_org_member_list',{p_org_id:ORG_ID}),[]) : Promise.resolve([]),
+      safe(rpc('thr_trust_shell_settings_v117',{p_org_id:ORG_ID}),{}),
+      safe(rpc('thr_operations_bundle_v120',{p_org_id:ORG_ID}),{inbox:[],claim_categories:[],claims:[],profile_changes:[],notifications:[],claim_payroll_queue:[]}),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_pay_item_bundle_v121',{p_org_id:ORG_ID}),{definitions:[],claim_categories:[],claim_payroll_queue:[]}) : Promise.resolve({definitions:[],claim_categories:[],claim_payroll_queue:[]}),
+      safe(rpc('thr_report_catalog_v121',{p_org_id:ORG_ID}),[]),
+      safe(rpc('thr_report_saved_views_v123',{p_org_id:ORG_ID,p_report_key:null}),[]),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_integration_bundle_v121',{p_org_id:ORG_ID}),{adapters:[],events:[]}) : Promise.resolve({adapters:[],events:[]}),
+      payrollRoles.includes(state.membership.role) ? safe(rpc('thr_integration_templates_v123',{p_org_id:ORG_ID}),[]) : Promise.resolve([]),
+      ['owner','admin','hr','manager'].includes(state.membership.role) ? safe(rpc('thr_talent_bundle_v122',{p_org_id:ORG_ID}),{cycles:[],goals:[],reviews:[],competency_catalog:[],employee_competencies:[],courses:[],enrollments:[],certificates:[]}) : Promise.resolve({cycles:[],goals:[],reviews:[],competency_catalog:[],employee_competencies:[],courses:[],enrollments:[],certificates:[]}),
+      ['owner','admin'].includes(state.membership.role) ? safe(rpc('thr_security_posture_v114',{p_org_id:ORG_ID}),{}) : Promise.resolve({}),
+      ['owner','admin','hr'].includes(state.membership.role) ? safe(rpc('thr_document_retention_bundle_v113',{p_org_id:ORG_ID}),{settings:[],counts:{}}) : Promise.resolve({settings:[],counts:{}})
+    ];
+    [
+      state.employees,
+      state.salaryProfiles,
+      state.attendanceBundle,
+      state.timesheets,
+      state.leaveBundle,
+      state.payrollRuns,
+      state.finalPayBundle,
+      state.taxAdminBundle,
+      state.members,
+      state.shellSettings,
+      state.operationsBundle,
+      state.payItemBundle,
+      state.reportCatalog,
+      state.savedReportViews,
+      state.integrationBundle,
+      state.integrationTemplates,
+      state.talentBundle,
+      state.securityPosture,
+      state.retentionBundle
+    ]=await Promise.all(common);
+    state.worksites=Array.isArray(state.shellSettings?.worksites)?state.shellSettings.worksites:[];
+    state.attendancePolicy=Array.isArray(state.shellSettings?.attendance_policy)?state.shellSettings.attendance_policy:[];
+    state.orgModules=Array.isArray(state.shellSettings?.organization_modules)?state.shellSettings.organization_modules:[];
+    state.lastLoadedAt=new Date();
+  } finally {
+    if(showSpinner) setLoading(false);
+  }
+}
+
+function kpi(label,value,sub=''){
+  return `<div class="thr117-card thr117-kpi"><label>${esc(label)}</label><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;
+}
+function tag(text,kind=''){
+  return `<span class="thr117-tag ${kind}">${esc(text)}</span>`;
+}
+function roleLabel(){ return state.membership?.role ? state.membership.role.toUpperCase() : '—'; }
+function initials(){
+  const email=state.session?.user?.email || '';
+  return (email[0]||'N').toUpperCase();
+}
+
+function top(){
+  return `
+  <div class="thr117-top">
+    <div class="thr117-brand">
+      <div class="thr117-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="thr117-brand-copy"><strong>TERAS HR · TRUST</strong><span>HR & Payroll Manager Portal · ${esc(CFG.version||'v117')}</span></div>
+    </div>
+    <div class="thr117-top-actions">
+      <button class="thr117-pill" data-action="refresh">${esc(state.membership?.organization_name||CFG.companyName)}</button>
+      <button class="thr117-btn" data-action="legacy-payroll">Detailed Payroll</button>
+      <div class="thr117-avatar" title="${esc(roleLabel())}">${esc(initials())}</div>
+    </div>
+  </div>`;
+}
+const tabs=[
+  ['overview','⌂','Overview'],
+  ['master','◉','Master Data'],
+  ['attendance','◷','Attendance'],
+  ['leave','□','Leave'],
+  ['operations','✓','Operations'],
+  ['payroll','RM','Payroll'],
+  ['payitems','＋','Pay Items'],
+  ['reports','↗','Reports'],
+  ['integrations','⇄','Integrations'],
+  ['talent','☆','Talent'],
+  ['settings','⚙','Settings']
+];
+function nav(){
+  const visible=tabs.filter(([id])=>{if(['payroll','payitems','integrations'].includes(id))return payrollRoles.includes(state.membership?.role);if(id==='talent')return ['owner','admin','hr','manager'].includes(state.membership?.role);return true;});
+  return `<div class="thr117-nav">${visible.map(([id,icon,label])=>`<button data-tab="${id}" class="${state.tab===id?'active':''}"><b>${esc(icon)}</b> <span>${esc(label)}</span></button>`).join('')}</div>`;
+}
+function head(kicker,title,sub,actions=''){
+  return `<div class="thr117-page-head"><div><div class="thr117-eyebrow">${esc(kicker)}</div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div>${actions?`<div class="thr117-toolbar">${actions}</div>`:''}</div>`;
+}
+
+function overview(){
+  const active=liveActiveEmployees().length;
+  const testers=testerEmployees().length;
+  const payrollPop=payrollEmployees().length;
+  const setup=state.salaryProfiles.filter(x=>x.profile).length;
+  const times=state.timesheets||[];
+  const complete=times.filter(x=>x.status==='complete').length;
+  const ot=times.reduce((a,x)=>a+Number(x.overtime_minutes||0),0);
+  const lb=state.leaveBundle||{};
+  const pendingLeave=(lb.requests||[]).filter(x=>x.status==='pending').length;
+  const latest=(state.payrollRuns||[]).find(x=>x.run_mode==='payroll');
+  const {blockers,pending,statutory,setup:setupBlockers}=payrollCounts(latest);
+  const currentCoverage=state.shellSettings?.current_schedule?.coverage_pct;
+
+  const latestRows=(times||[]).slice(0,8);
+  return `
+  ${head('TRUST HR & PAYROLL','Command Centre','One manager workspace for employees, attendance, leave and payroll.')}
+  <div class="thr117-grid thr117-kpis">
+    ${kpi('Active Workforce',active,testers?`${testers} tester excluded from readiness`:'live employees')}
+    ${kpi('Attendance',`${complete} complete`,`last 31 days · ${hours(ot)} OT hrs`)}
+    ${kpi('Leave',pendingLeave, pendingLeave===1?'pending request':'pending requests')}
+    ${kpi('Payroll',latest?payrollStatus(latest):'—', latest?`${fmtDate(latest.period_start)} → ${fmtDate(latest.period_end)} · ${payrollIssueSummary(latest)}`:'No payroll run')}
+  </div>
+  <div class="thr117-grid thr117-two thr117-section">
+    <div class="thr117-card">
+      <div class="thr117-section-title"><h2>Recent attendance</h2><button class="thr117-btn" data-tab="attendance">Open Attendance</button></div>
+      <div class="thr117-list">
+        ${latestRows.length?latestRows.map(r=>`<div class="thr117-list-item"><div><div class="thr117-name">${esc(r.employee_name)}</div><div class="thr117-sub">${fmtDate(r.work_date)} · ${esc(r.day_type||'workday')}</div></div><div>${tag(r.status,r.status==='complete'?'ok':'warn')}</div></div>`).join(''
